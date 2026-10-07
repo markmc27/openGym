@@ -643,6 +643,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       <Icon name="pin" style={{ fontSize: 13, marginInlineEnd: 5, verticalAlign: '-2px' }} />
       {t('From {0}:', fmtDate(pinnedNote.d, true))} {pinnedNote.note}
     </div>}
+    {entry.coachingNotes && <div className="exnote">{entry.coachingNotes}</div>}
+    {S.active?.coachingNotes && <div className="exnote">{S.active.coachingNotes}</div>}
+    {entry.sets.map((s, i) => (s.targetRir != null || s.targetRpe != null || s.coachingNotes) ? <div className="exnote" key={i}>{i+1}: {s.targetRir != null ? `RIR ${s.targetRir}` : s.targetRpe != null ? `RPE ${s.targetRpe}` : ''} {s.coachingNotes}</div> : null)}
     {entry.note && <div className="exnote">{entry.note}</div>}
     {planLine}
     {refLine}

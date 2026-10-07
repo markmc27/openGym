@@ -428,6 +428,8 @@ export function bestWeightFor(S, exId) {
  * other days. Once the session is done the pin is fulfilled and the day reads as if unpinned.
  */
 export function effectiveRoutineIds(S, iso, today = todayISO()) {
+  const prescribed = (S.sessionPrescriptions || []).find(p => p.date === iso && !(S.workouts || []).some(w => w.session_id === p.id))
+  if (prescribed && S.routines.some(r => r.id === prescribed.routine_id)) return [prescribed.routine_id]
   const ov = S.dayPlan[iso]
   if (ov === 'rest') return []
   const pin = pinState(S, ov)

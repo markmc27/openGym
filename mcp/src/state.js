@@ -3,6 +3,15 @@
    tool call without a restart. */
 import fs from 'node:fs'
 import path from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { readPrescriptions, createPrescription } from './prescriptions.js'
+const context = new AsyncLocalStorage()
+export const withProfile = (profile, fn) => context.run(profile, fn)
+export function setNextSession(input) {
+  const remote = context.getStore()
+  const user = remote ? remote.user : getUser()
+  return createPrescription(remote?.data || DATA_DIR, user.id, getState(), input)
+}
 
 const DATA_DIR = process.env.OPENGYM_DATA || path.join(process.cwd(), 'data')
 
@@ -114,6 +123,8 @@ export function init() {
 
 // Returns the state object, or null for a fresh account that never signed in on a device.
 export function getState() {
+  const remote = context.getStore()
+  if (remote) return remote.readState()
   init()
   const file = stateFile(_uid)
   // Re-read if the file's mtime changed since our last load — covers watcher omissions and
@@ -133,11 +144,14 @@ export function getState() {
       _state = null  // no state file at all — never signed in on a device
     }
   }
-  return _state
+  if (!_state) return _state
+  const p = readPrescriptions(DATA_DIR, _uid)
+  return { ..._state, sessionPrescriptions: p.sessions, sessionPrescriptionsVersion: p.version }
 }
 
 // Returns the user record (id + name). No passkey material, no VAPID keys, no push subs.
 export function getUser() {
+  if (context.getStore()) return context.getStore().user
   init()
   const u = _db.users.find(x => x.id === _uid) || { id: _uid, name: 'Profile', created: null }
   return { id: u.id, name: u.name, created: u.created || null }

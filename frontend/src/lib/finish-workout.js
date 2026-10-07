@@ -123,6 +123,7 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     bw: active.bw,
     entries,
     prs,
+    ...(active.session_id ? { session_id: active.session_id, prescription: active.prescription } : {}),
     ...(allNoProg ? { excludeFromProgression: true } : {}),
     ...(sessionNote ? { note: sessionNote } : {}),
   }

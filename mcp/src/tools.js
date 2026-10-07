@@ -2,7 +2,9 @@
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
 import { z } from 'zod'
-import { getState, getUser } from './state.js'
+import { getState, getUser, setNextSession } from './state.js'
+import { prescriptionSchema } from './prescriptions.js'
+import { sessionComparison, prescriptionFor, applyPrescription } from '../../frontend/src/lib/session-prescription.js'
 import {
   fmt, setLabel, exLine, muscleName, policyName, friendlyDuration, ratio, muscleOrder
 } from './labels.js'
@@ -55,6 +57,7 @@ function entryView(e, S) {
     body_part: ex.bp || null,
     mode,
     target: e.target || null,
+    note: e.note || null,
     sets: (e.sets || []).map(s => ({
       done: !!s.done,
       label: setLabel(e.id, { ...s, done: undefined }, cfg),
@@ -62,7 +65,9 @@ function entryView(e, S) {
       r: Number(s.r) || 0,
       sec: Number(s.sec) || 0,
       min: Number(s.min) || 0,
-      speed: Number(s.speed) || 0
+      speed: Number(s.speed) || 0,
+      rir: s.rir ?? null, rpe: s.rpe ?? null, sides: s.sides ?? null,
+      phase: s.phase || 'work', notes: s.notes || null, prescription_set: s.prescriptionSet ?? null
     }))
   }
 }
@@ -349,6 +354,7 @@ export const getWorkout = {
       routine_name: w.name || null,
       unit: S.unit || 'kg',
       bodyweight_at_workout: w.bw || null,
+      session_id: w.session_id || null, note: w.note || null, prescription: w.prescription || null,
       volume: workoutVolume(w),
       sets_done: setsDone(w),
       sets_planned: plannedSets(w),
@@ -521,6 +527,7 @@ function sourceOf(S, cfg, plan, field, routine) {
 }
 
 const SOURCE_TEXT = {
+  session_prescription: 'the explicit prescription for this dated session',
   progression: 'the progression policy overrode the routine',
   confirmed_weight: 'your confirmed working weight for this exercise',
   last_session: 'carried over from the last time this routine had this exercise (or any routine, if this one never has)',
@@ -555,19 +562,20 @@ export const previewSession = {
     // The same builder the app starts a session with (sheets.jsx beginWorkout → session-start.js):
     // prescription, step, progression-off targets, deload routines and warm-up ramps all come from
     // there, so the preview cannot drift from what the screen shows.
-    const built = buildSessionEntries(S, r)
+    const session = prescriptionFor(S, iso, [r.id])
+    const built = applyPrescription(buildSessionEntries(S, r), session, unit)
     const exercises = (r.ex || []).map((cfg, i) => {
       const ex = exerciseOf(cfg.id, S)
       const mode = modeOf({ ...cfg, id: cfg.id })
-      const plan = built[i].plan
+      const plan = built[i].plan || { kind: 'session_prescription', policy: 'off', why: ['Explicit prescription for this session'], weight: built[i].sets[0]?.w, reps: built[i].sets[0]?.r, sets: built[i].sets.length }
       const rows = built[i].sets
       const work = rows.filter(s => !isWarmupRow(s))
       const openW = work.length ? (work[0].w || 0) : 0
       const openR = work.length ? (work[0].r || 0) : 0
       const openSec = work.length ? (work[0].sec || 0) : 0
       const openMin = work.length ? (work[0].min || 0) : 0
-      const wSrc = sourceOf(S, cfg, plan, 'weight', r)
-      const rSrc = sourceOf(S, cfg, plan, 'reps', r)
+      const wSrc = session ? 'session_prescription' : sourceOf(S, cfg, plan, 'weight', r)
+      const rSrc = session ? 'session_prescription' : sourceOf(S, cfg, plan, 'reps', r)
       return {
         position: i + 1,
         id: cfg.id,
@@ -599,7 +607,10 @@ export const previewSession = {
           r: Number(s.r) || 0,
           sec: Number(s.sec) || 0,
           min: Number(s.min) || 0,
-          speed: Number(s.speed) || 0
+          speed: Number(s.speed) || 0,
+          rir: s.rir ?? null, rpe: s.rpe ?? null, sides: s.sides ?? null,
+          target_rir: s.targetRir ?? null, target_rpe: s.targetRpe ?? null,
+          notes: s.coachingNotes || s.notes || null, prescription_set: s.prescriptionSet ?? null
         })),
         weight_source: wSrc,
         weight_source_text: SOURCE_TEXT[wSrc],
@@ -627,6 +638,7 @@ export const previewSession = {
       date: iso,
       routine_id: r.id,
       routine_name: r.name,
+      ...(session ? { session_id: session.id, coaching_notes: session.notes || null } : {}),
       unit,
       // The profile's "Planned sessions start from" setting: 'plan' opens at the routine's own
       // reps, 'last_session' carries them over from the last time.
@@ -666,3 +678,14 @@ function noState() {
     unit: 'kg'
   }
 }
+
+export const SESSION_TOOLS = [
+  { name: 'set_next_session', description: 'Write one immutable, dated session prescription for an existing routine. Never changes the master routine. V1 supports straight bilateral rep sets only. Supply all exercises in routine order and a stable session_id; identical retries are safe. Load is in the profile unit. RIR/RPE are targets, not completed effort.', schema: prescriptionSchema.shape, write: true,
+    handler: input => { const { requestHash, ...saved } = setNextSession(input); return saved } },
+  { name: 'list_sessions', description: 'List dated prescribed sessions with stable IDs and their completion status.', schema: {},
+    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(({ requestHash, ...p }) => ({ ...p, status: S.workouts.some(w => w.session_id === p.id) ? 'completed' : 'planned' })) } } },
+  { name: 'get_session', description: 'Read one prescribed session and the actual completed workout, including skipped exercises, changed rows, RIR/RPE and notes. Completed data appears after the athlete finishes and syncs.', schema: { session_id: z.string().min(1).max(128) },
+    handler: ({ session_id }) => { const S = getState(); const p = S?.sessionPrescriptions?.find(p => p.id === session_id); if (!p) throw new Error('session not found'); const { requestHash, ...safe } = p; return sessionComparison(safe, S.workouts.find(w => w.session_id === session_id), S.unit || 'kg') } },
+  { name: 'get_exercise_history', description: 'Read recent completed workouts for one exercise with raw set rows, effort ratings and notes.', schema: { exercise_id: z.string().min(1).max(128), limit: z.number().int().min(1).max(100).default(20) },
+    handler: ({ exercise_id, limit = 20 }) => { const S = getState(); return { unit: S?.unit || 'kg', workouts: (S?.workouts || []).filter(w => w.entries?.some(e => e.id === exercise_id)).sort((a,b) => b.d.localeCompare(a.d)).slice(0,limit).map(w => ({ id:w.id, date:w.d, session_id:w.session_id || null, note:w.note || null, entries:w.entries.filter(e => e.id === exercise_id) })) } } },
+]

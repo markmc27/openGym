@@ -1,5 +1,9 @@
 # openGym MCP server
 
+**This fork adds optional authenticated Streamable HTTP and immutable session prescriptions.**
+See [REMOTE.md](REMOTE.md) for the implemented transports, OAuth setup and new tools.
+The remainder describes the upstream local read tools.
+
 A [Model Context Protocol](https://modelcontextprotocol.io) bridge that lets an external LLM
 application (Claude Desktop, Cursor, Cline, Continue, etc.) read your openGym profile —
 routines, workouts, body-weight log, estimated 1RMs, and muscle balance — directly from your

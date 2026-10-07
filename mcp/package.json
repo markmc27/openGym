@@ -1,9 +1,9 @@
 {
   "name": "opengym-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "MCP (Model Context Protocol) bridge for openGym — lets an external LLM read your routines, workouts, body-weight log, estimated 1RMs and muscle balance from your self-hosted data. Read-only, stdio transport; no extra container.",
+  "description": "Shared openGym training tools over stdio and authenticated Streamable HTTP, with immutable per-session prescriptions.",
   "license": "AGPL-3.0-or-later",
   "main": "src/index.js",
   "bin": {
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^5.2.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

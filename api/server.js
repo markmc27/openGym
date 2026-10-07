@@ -1858,6 +1858,7 @@ const routes = {
     // that has no Coach. The key's absence is that answer.
     json(res, 200, {
       invite_only: INVITE_ONLY, allow_guest: ALLOW_GUEST,
+      ...(process.env.MCP_ENABLED === '1' ? { mcp: true } : {}),
       // Only when on, so an instance without passwords answers exactly as it did before (#118).
       ...(PASSWORD_LOGIN ? { password_login: true } : {}),
       // Public: the sign-in screen is the first thing that reads it.
@@ -2095,13 +2096,19 @@ const routes = {
   // `_unstamped` is the server's note of what it stamped for an older app's last push
   // (sync-stamps.js ownRecord), `_prior` what each field held before (notePrior): read back only
   // by the next PUT, never sent to a client.
+  'GET /api/session-prescriptions': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    json(res, 200, prescriptionFields(user.id));
+  },
+
   'GET /api/data': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const state = readStateStrict(user.id);
     if (state === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
     notePull(user);
-    json(res, 200, { state: forClient(state), rev: state?._rev || 0 });
+    json(res, 200, { state: state ? { ...forClient(state), ...prescriptionFields(user.id) } : state, rev: state?._rev || 0 });
   },
   // Just the revision: the client asks this every half minute while it is open and on every
   // return to the foreground, and fetches the document only when the number moved — a signed-in
@@ -2113,7 +2120,7 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const doc = readStateCached(user.id);
-    json(res, 200, { rev: doc?._rev || 0, ...(doc?._wid ? { wid: doc._wid } : {}) });
+    json(res, 200, { ...(prescriptionStore ? { sessionPrescriptionsVersion: prescriptionFields(user.id).sessionPrescriptionsVersion || 0 } : {}), rev: doc?._rev || 0, ...(doc?._wid ? { wid: doc._wid } : {}) });
   },
 
   'PUT /api/data': async (req, res) => {
@@ -2163,6 +2170,7 @@ const routes = {
         (body.baseRev != null && typeof body.baseWid === 'string' && cur?._wid && body.baseWid !== cur._wid)) {
       return json(res, 409, { error: 'conflict', rev: curRev, state: forClient(cur) });
     }
+    delete body.state.sessionPrescriptions; delete body.state.sessionPrescriptionsVersion;
     delete body.state.active;              // in-progress workouts stay device-local
     // "Reset everything" stamps the profile (`resetAt`, with `resetIds`: what it wiped). The stamp
     // only moves forward: a write without it, or with an older one — a client from before it, a
@@ -2516,6 +2524,29 @@ coachJobs.setProposalHook((uid, pending) => {
 startCadence({ users: () => db.users, userNow });
 startWarmup();
 
+// Opt-in transport: the ordinary API image has no MCP dependencies.
+let remoteMcp = null, prescriptionStore = null;
+if (process.env.MCP_ENABLED === '1') {
+  const { createHttpHandler } = await import('../mcp/src/http.js');
+  prescriptionStore = await import('../mcp/src/prescriptions.js');
+  remoteMcp = createHttpHandler({ origin: ORIGIN, data: DATA, readSession, trustProxy: TRUST_PROXY,
+    userById: id => db.users.find(u => u.id === id && !u.disabled),
+    readState: id => {
+      const S = readStateStrict(id);
+      if (S === UNREADABLE) throw new Error('state unreadable');
+      if (!S) return null;
+      const p = prescriptionStore.readPrescriptions(DATA, id);
+      return { ...S, sessionPrescriptions: p.sessions, sessionPrescriptionsVersion: p.version };
+    },
+    redirectUris: (process.env.MCP_REDIRECT_URIS || 'https://chatgpt.com/connector_platform_oauth_redirect').split(',').map(s => s.trim()).filter(Boolean),
+  });
+}
+const prescriptionFields = id => {
+  if (!prescriptionStore) return {};
+  const p = prescriptionStore.readPrescriptions(DATA, id);
+  return { sessionPrescriptions: p.sessions.map(({requestHash, ...s}) => s), sessionPrescriptionsVersion: p.version };
+};
+
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the
 // sake of one: a video uploaded over a slow uplink. Every other request keeps node's old five
 // minutes to finish sending its body — readBody has no timer of its own, and a trickled body on
@@ -2542,6 +2573,10 @@ const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'http
 
 const server = http.createServer(async (req, res) => {
   bodyDeadline(req);
+  const mcpPath = req.url?.split('?')[0];
+  if (remoteMcp && (mcpPath === '/mcp' || mcpPath?.startsWith('/mcp/') || mcpPath?.startsWith('/.well-known/') || ['/authorize', '/token', '/register', '/revoke'].includes(mcpPath))) {
+    return remoteMcp(req, res);
+  }
   // Same-origin (the deployed nginx-proxied web app) never triggers CORS, so this only matters
   // for the paired mobile app calling in from its own WebView origin. It carries no cookie
   // (auth is the Authorization header instead), so Allow-Credentials is deliberately never set —

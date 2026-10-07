@@ -163,6 +163,30 @@ security:
   - bearerAuth: []
 
 paths:
+  /api/session-prescriptions:
+    get:
+      tags: [data]
+      summary: Read immutable dated session prescriptions for the signed-in profile
+      description: MCP-enabled instances return server-owned prescriptions and their version. Other instances return an empty object. The client must fetch this immediately before starting a prescribed workout.
+      responses:
+        '200':
+          description: Session prescriptions and monotonic prescription version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionPrescriptions:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  sessionPrescriptionsVersion:
+                    type: integer
+                    minimum: 0
+        '401':
+          description: Not signed in
+
   /api/health:
     get:
       tags: [meta]

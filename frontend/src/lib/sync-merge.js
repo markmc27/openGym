@@ -739,6 +739,8 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   const n = side === 'a' ? a : b
   const o = n === a ? b : a
   const out = clone(n)
+  const prescriptions = (a.sessionPrescriptionsVersion || 0) >= (b.sessionPrescriptionsVersion || 0) ? a : b
+  if (prescriptions.sessionPrescriptions) { out.sessionPrescriptions = clone(prescriptions.sessionPrescriptions); out.sessionPrescriptionsVersion = prescriptions.sessionPrescriptionsVersion || 0 }
   // The unit is the lead's by now; so is the record of choosing it.
   const unitBy = lead || (unitStamp(a) >= unitStamp(b) ? a : b)
   if (unitBy.unitSet) out.unitSet = clone(unitBy.unitSet)

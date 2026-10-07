@@ -613,7 +613,8 @@ export const useStore = create((set, get) => {
     const { base } = metaOf()
     if (!base || owes()) return get().pullState()
     try {
-      const { rev, wid } = await api('/api/data/rev')
+      const { rev, wid, sessionPrescriptionsVersion } = await api('/api/data/rev')
+      if ((sessionPrescriptionsVersion || 0) !== (get().S.sessionPrescriptionsVersion || 0)) return get().pullState()
       if (rev !== base.rev || (base.wid && wid && wid !== base.wid)) return get().pullState()
       confirmed(get().S)   // nothing moved on either side
     } catch (e) {
@@ -1574,6 +1575,7 @@ export const useStore = create((set, get) => {
           lastCheck = Date.now()
           reached()
           const { state, rev } = res
+          if (state?.sessionPrescriptions) set({ S: { ...get().S, sessionPrescriptions: state.sessionPrescriptions, sessionPrescriptionsVersion: state.sessionPrescriptionsVersion || 0 } })
           const S = get().S
           const { base, owed } = metaOf()
           // Owed to the server: a push that failed, or a change made while boot was still pulling.

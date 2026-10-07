@@ -1,3 +1,5 @@
+import { api } from './lib/api.js'
+import { prescriptionFor, applyPrescription } from './lib/session-prescription.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -2368,17 +2370,33 @@ export function WorkoutRow({ w, onClick }) {
 // `routineIds` accepts `string | string[] | null` — `[r.id]` for one routine,
 // `effectiveRoutineIds(...)` for today's planned session, `[]` / null for explicit freestyle.
 export function startFlow(routineIds) {
+  if (useStore.getState().user && useStore.getState().config?.mcp) {
+    api('/api/session-prescriptions').then(fields => {
+      const st = S()
+      const prescribed = prescriptionFor({ ...st, ...fields }, todayISO(), routineIds)
+      const begin = bw => beginWorkout(routineIds, bw, prescribed)
+      if (st.weighIn === false) begin(null)
+      else bwSheet({ required: true, onDone: begin })
+    }).catch(() => toast(t('Sync failed — retrying when back online.')))
+    return
+  }
   // The weigh-in is a setting (Settings → During a workout, issue #137): off goes straight
   // into the session with no body weight on it, same as "Start without weighing in".
   if (S().weighIn === false) { beginWorkout(routineIds, null); return }
   bwSheet({ required: true, onDone: bw => beginWorkout(routineIds, bw) })
 }
-export function beginWorkout(routineIds, bw) {
+export function beginWorkout(routineIds, bw, prescribed) {
   const st = S()
-  const { entries, routineIds: rids, routines } = buildCombinedEntries(st, routineIds)
+  const built = buildCombinedEntries(st, routineIds)
+  const { routineIds: rids, routines } = built
+  const prescription = prescribed || prescriptionFor(st, todayISO(), rids)
+  let entries
+  try { entries = applyPrescription(built.entries, prescription, st.unit || 'kg') }
+  catch (e) { toast(e.message); return }
   update(s => {
     s.active = {
-      id: uid(), d: todayISO(), start: Date.now(),
+      id: prescription?.id || uid(), d: todayISO(), start: Date.now(),
+      ...(prescription ? { session_id: prescription.id, prescription: structuredClone(prescription), coachingNotes: prescription.notes || '' } : {}),
       // A session tracks its routines as a list; per-entry `rid` carries which one each
       // exercise came from. No top-level `excludeFromProgression` — per-entry `noProg` does it.
       routineIds: rids,
