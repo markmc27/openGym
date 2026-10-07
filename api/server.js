@@ -2529,7 +2529,7 @@ let remoteMcp = null, prescriptionStore = null;
 if (process.env.MCP_ENABLED === '1') {
   const { createHttpHandler } = await import('../mcp/src/http.js');
   prescriptionStore = await import('../mcp/src/prescriptions.js');
-  remoteMcp = createHttpHandler({ origin: ORIGIN, data: DATA, readSession, trustProxy: TRUST_PROXY,
+  remoteMcp = createHttpHandler({ origin: process.env.MCP_ORIGIN || ORIGIN, data: DATA, readSession, trustProxy: TRUST_PROXY,
     userById: id => db.users.find(u => u.id === id && !u.disabled),
     readState: id => {
       const S = readStateStrict(id);

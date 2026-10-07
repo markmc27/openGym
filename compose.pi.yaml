@@ -17,10 +17,12 @@ services:
       RP_ID: ${OPENGYM_HOSTNAME:-localhost}
       ORIGIN: ${OPENGYM_ORIGIN:-http://localhost:8090}
       MCP_ENABLED: '1'
+      MCP_ORIGIN: ${OPENGYM_MCP_ORIGIN:-http://localhost:8090}
       MCP_REDIRECT_URIS: ${MCP_REDIRECT_URIS:-https://chatgpt.com/connector_platform_oauth_redirect}
       TZ: Europe/London
       ALLOW_GUEST: '0'
       FIRST_USER_ADMIN: '1'
+      PASSWORD_LOGIN: ${OPENGYM_PASSWORD_LOGIN:-0}
       INVITE_ONLY: ${OPENGYM_INVITE_ONLY:-0}
       TRUST_PROXY: '1'
     volumes:
