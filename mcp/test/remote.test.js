@@ -48,6 +48,8 @@ async function grant(scope = 'training:read sessions:write') {
   const consent = new URL(a.headers.get('location'))
   const page = await request(consent.pathname+consent.search, { headers:{ Cookie:'test=a' } })
   expect(page.status).toBe(200)
+  expect(page.headers.get('content-security-policy')).toContain(`form-action 'self' ${redirect}`)
+  expect(page.headers.get('content-security-policy')).not.toContain('*')
   const html = await page.text()
   const csrf = /name="csrf" value="([^"]+)"/.exec(html)[1]
   const ticket = consent.searchParams.get('ticket')

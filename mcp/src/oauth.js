@@ -85,7 +85,11 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
       const p = typeof ticket === 'string' && pending.get(hash(ticket))
       if (!p) return res.status(400).send('Authorization expired. Reconnect from ChatGPT.')
       const user = readSession(req)
-      res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer' })
+      // Browsers also apply form-action to the OAuth POST's cross-origin redirect.
+      // Permit only this request's already-allowlisted callback, never arbitrary origins.
+      const callback = new URL(p.params.redirectUri)
+      const callbackSource = callback.origin + callback.pathname
+      res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${callbackSource}; base-uri 'none'; frame-ancestors 'none'`, 'Referrer-Policy': 'no-referrer' })
       if (!user) return res.status(401).type('html').send(`<!doctype html><title>Connect openGym</title><h1>Sign into openGym first</h1><p><a href="/" target="_blank" rel="noopener">Open openGym</a>, sign in, then reload this page.</p>`)
       p.uid = user.id
       p.csrf = random()
