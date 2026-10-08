@@ -1,5 +1,6 @@
 import { api } from './lib/api.js'
 import { prescriptionFor, applyPrescription } from './lib/session-prescription.js'
+import { routinesWithSessions, prescriptionRoutineId } from './lib/session-plan.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -1994,11 +1995,12 @@ function DayOverride({ iso, close }) {
   // The plan the day would have without its override — the weekday's routines, and in a coach
   // week the queue's session for the day in front of them, same as the Home row shows.
   const { [iso]: _ovr, ...noOvr } = st.dayPlan
-  const weeklyNames = effectiveRoutineIds({ ...st, dayPlan: noOvr }, iso).map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean)
+  const weeklyNames = effectiveRoutineIds({ ...st, dayPlan: noOvr }, iso).map(id => routinesWithSessions(st).find(r => r.id === id)?.name).filter(Boolean)
   // A weekday can hold several routines; the per-date override stays single-pick, so picking
   // one here collapses a combined day to it (docs/dev/COMBINE_ROUTINES.md §8). The check marks
   // show everything currently planned for the day.
   const effIds = effectiveRoutineIds(st, iso)
+  const session = prescriptionFor(st, iso, effIds)
   // A planned day in the past with nothing logged was missed — or trained and never logged,
   // like a run you forgot to start the app for (#284). Logging it opens "Log a past workout" on
   // that date with the day's routines picked, where the time and the duration can still change.
@@ -2027,6 +2029,16 @@ function DayOverride({ iso, close }) {
     {effIds.includes(r.id) && <Icon name="check" className="accent" />}</div>
   return <>
     <h3>{fmtDate(iso, true)}</h3>
+    {session?.kind === 'standalone' && <div className="card" style={{ marginBottom:14 }}>
+      <h4>{session.title}</h4>
+      {session.notes && <p className="small muted">{session.notes}</p>}
+      {session.exercises.map(e => <div key={e.position} className="small" style={{ marginBottom:8 }}>
+        <strong>{e.exercise?.n || exOr(e.exercise_id).n}</strong>
+        <div className="muted">{e.sets.map(s => `${s.load} ${session.unit} × ${s.reps != null ? s.reps : `${s.seconds}s`}${e.unilateral ? ' / side' : ''}${s.phase === 'warmup' ? ' (warm-up)' : ''}`).join(' · ')}</div>
+        {e.notes && <div className="muted">{e.notes}</div>}
+      </div>)}
+      {iso === todayISO() && <Button variant="primary" onClick={() => { close(); startFlow([prescriptionRoutineId(session)]) }}>{t('Start')}</Button>}
+    </div>}
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{changed && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
     {missed && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>}
     {coach.length > 0 && <>
@@ -2379,10 +2391,21 @@ export function startFlow(routineIds) {
     if (!stillCurrent()) return
     const st = S()
     const prescribed = prescriptionFor({ ...st, ...fields }, date, routineIds)
-    const begin = bw => {
-      if (stillCurrent()) beginWorkout(routineIds, bw, prescribed || null)
+    const begin = async bw => {
+      if (!stillCurrent()) return
+      let claimed = prescribed
+      if (prescribed && !prescribed.started_at && !fields.offline) {
+        try {
+          const response = await api('/api/session-prescriptions/start', {method:'POST',body:JSON.stringify({session_id:prescribed.id,revision:prescribed.revision || 1})})
+          claimed = response.session
+          if (!stillCurrent()) return
+          useStore.setState(s => ({S:{...s.S,sessionPrescriptions:response.sessionPrescriptions,sessionPrescriptionsVersion:response.sessionPrescriptionsVersion}}))
+        } catch (e) { toast(e.message); return }
+      }
+      if (prescribed?.schema_version === 2 && !claimed?.started_at) { toast('Connect to the server once to start this prescribed session.'); return }
+      if (stillCurrent()) beginWorkout(routineIds, bw, claimed || null)
     }
-    if (st.weighIn === false) begin(null)
+    if (st.weighIn === false) return begin(null)
     else bwSheet({ required: true, onDone: begin })
   }
   if (owner && useStore.getState().config?.mcp) {
@@ -2392,14 +2415,15 @@ export function startFlow(routineIds) {
       // Authentication failures must not start a workout under a stale account.
       if (e.status === 401 || e.status === 403) { toast(t('Sign in')); return }
       toast(t('Offline'))
-      open({ sessionPrescriptions: S().sessionPrescriptions || [] })
+      return open({ sessionPrescriptions: S().sessionPrescriptions || [], offline:true })
     }).finally(() => { pendingStart = false })
   }
   open({})
 }
 export function beginWorkout(routineIds, bw, prescribed) {
   const st = S()
-  const built = buildCombinedEntries(st, routineIds)
+  const buildState = prescribed ? {...st,sessionPrescriptions:[...(st.sessionPrescriptions || []).filter(p => p.id !== prescribed.id),prescribed]} : st
+  const built = buildCombinedEntries(buildState, routineIds)
   const { routineIds: rids, routines } = built
   const prescription = prescribed === undefined ? prescriptionFor(st, todayISO(), rids) : prescribed
   let entries
@@ -2459,7 +2483,7 @@ const PLANNED_DAY = '__planned-day'
 function LogPastWorkout({ initial, close }) {
   const st = useStore(s => s.S)
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-  const planned = [].concat(initial?.routineIds || []).map(id => st.routines.find(r => r.id === id)).filter(Boolean)
+  const planned = [].concat(initial?.routineIds || []).map(id => routinesWithSessions(st).find(r => r.id === id)).filter(Boolean)
   const [date, setDate] = useState(initial?.iso || isoOf(yesterday))
   const [time, setTime] = useState('18:00')
   const [dur, setDur] = useState(60)
@@ -2468,7 +2492,7 @@ function LogPastWorkout({ initial, close }) {
   const options = [
     { value: '', label: t('Freestyle') },
     ...(planned.length > 1 ? [{ value: PLANNED_DAY, label: deriveSessionName(planned.map(r => r.name)) }] : []),
-    ...st.routines.map(r => ({ value: r.id, label: r.name })),
+    ...routinesWithSessions(st).filter(r => !r.session_id || st.sessionPrescriptions?.some(p => p.id === r.session_id && p.date === date)).map(r => ({ value: r.id, label: r.name })),
   ]
 
   const go = replaceId => {
@@ -2534,8 +2558,19 @@ export function logPastWorkoutSheet(initial) {
 // top-level routineId. One routine from the picker, or every routine of a missed combined day.
 // Only from the history before that day (historyAsOf): a session logged later must not hand its
 // progression back to the day it skipped.
-function beginBackfill({ iso, time, durationMin, routineIds, replaceId }) {
-  const st = S()
+async function beginBackfill({ iso, time, durationMin, routineIds, replaceId }) {
+  let st = S()
+  const owner = useStore.getState().user?.id
+  const planned = prescriptionFor(st, iso, routineIds || [])
+  if (planned?.schema_version === 2 && !planned.started_at) {
+    try {
+      const response = await api('/api/session-prescriptions/start', {method:'POST',body:JSON.stringify({session_id:planned.id,revision:planned.revision || 1})})
+      if (useStore.getState().user?.id !== owner || S().active) return
+      if (!response.session?.started_at) throw new Error('Could not start this prescribed session.')
+      useStore.setState(s => ({S:{...s.S,sessionPrescriptions:response.sessionPrescriptions,sessionPrescriptionsVersion:response.sessionPrescriptionsVersion}}))
+      st = S()
+    } catch (e) { toast(e.message); return }
+  }
   const start = backfillStart(iso, time)
   const past = historyAsOf(st, { d: iso, start, replaceId })
   const built = buildCombinedEntries(past, routineIds || [])

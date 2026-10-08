@@ -2101,6 +2101,21 @@ const routes = {
     if (!user) return json(res, 401, { error: 'not signed in' });
     json(res, 200, prescriptionFields(user.id));
   },
+  'POST /api/session-prescriptions/start': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    if (!sessionBuilder) return json(res, 404, { error: 'session prescriptions unavailable' });
+    const body = await readBody(req);
+    if (!body || typeof body.session_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.session_id)
+      || !Number.isInteger(body.revision) || body.revision < 1 || body.revision > 20
+      || Object.keys(body).some(k => !['session_id','revision'].includes(k))) return json(res, 400, { error: 'invalid session start' });
+    const state = readStateStrict(user.id);
+    if (state === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    try {
+      const p = sessionBuilder.startPrescription(DATA, user.id, state, body.session_id, body.revision);
+      json(res, 200, { ...prescriptionFields(user.id), session:sessionBuilder.publicPrescription(p) });
+    } catch (e) { json(res, 409, { error:e.message }); }
+  },
 
   'GET /api/data': async (req, res) => {
     const user = readSession(req);
@@ -2528,10 +2543,11 @@ startCadence({ users: () => db.users, userNow });
 startWarmup();
 
 // Opt-in transport: the ordinary API image has no MCP dependencies.
-let remoteMcp = null, prescriptionStore = null;
+let remoteMcp = null, prescriptionStore = null, sessionBuilder = null;
 if (process.env.MCP_ENABLED === '1') {
   const { createHttpHandler } = await import('../mcp/src/http.js');
   prescriptionStore = await import('../mcp/src/prescriptions.js');
+  sessionBuilder = await import('../mcp/src/session-builder.js');
   remoteMcp = createHttpHandler({ origin: process.env.MCP_ORIGIN || ORIGIN, data: DATA, readSession, trustProxy: TRUST_PROXY,
     userById: id => db.users.find(u => u.id === id && !u.disabled),
     readState: id => {
@@ -2547,7 +2563,7 @@ if (process.env.MCP_ENABLED === '1') {
 const prescriptionFields = id => {
   if (!prescriptionStore) return {};
   const p = prescriptionStore.readPrescriptions(DATA, id);
-  return { sessionPrescriptions: p.sessions.map(({requestHash, ...s}) => s), sessionPrescriptionsVersion: p.version };
+  return { sessionPrescriptions: p.sessions.map(sessionBuilder.publicPrescription), sessionPrescriptionsVersion: p.version };
 };
 
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the

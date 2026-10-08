@@ -2,7 +2,7 @@
 
 The original stdio command (`node mcp/src/index.js`) remains available. Both stdio
 and the opt-in HTTP API use `src/service.js` and the same tool handlers and pure
-training functions. Read tools carry `readOnlyHint: true`; `set_next_session` is an
+training functions. Read tools carry `readOnlyHint: true`; each prescription tool is an
 idempotent write with a strict schema, not a generic profile mutation.
 
 Build the opt-in API from the repository root using `api/Dockerfile.mcp` or run
@@ -67,3 +67,43 @@ and durable atomic replacement. HTTP scopes apply at the transport boundary;
 stdio retains the local filesystem trust boundary and can use the same scoped
 prescription tool when its data directory is writable. Read-only mounts continue
 to support the original read tools.
+
+## Standalone workouts and safe revisions
+
+`get_profile` identifies the connected profile and its load unit. `search_exercises`
+finds catalogue exercises and that profile's custom exercises, returning stable IDs
+and supported modes. Use these IDs rather than inventing exercises or silently
+substituting a partial test routine.
+
+`create_session_prescription` accepts a complete one-off workout: `session_id`,
+`title`, `date`, `unit`, optional `base_routine_id` and `notes`, and an ordered
+`exercises` array. No saved routine is required. `base_routine_id` records provenance
+only; the supplied exercise list defines the session and never edits the master.
+Each exercise requires `position`, `exercise_id`, `mode` (`reps` or `time`), and
+`sets`. A set requires `load` and either `reps` or `seconds`. Optional fields include
+`phase` (`warmup` or `work`), target `rir` or `rpe`, and coaching `notes`.
+Exercise options include `rest_sec` (including zero), `unilateral` (reps per side),
+and `superset_group` (two or more adjacent exercises with the same group ID).
+Warm-ups precede work sets. Cardio, timed unilateral sets and intensifiers are not
+supported by this tool. Limits: 100 exercises, 30 sets per exercise, 300 sets total.
+
+`replace_session_prescription` accepts `session_id`, `expected_revision`, and a
+complete `prescription` payload with the same fields except `session_id`. It keeps
+the stable ID, increments `revision`, and archives previous prescriptions in
+`revisions`. Identical retries do not make extra versions. Conflicting revisions
+fail; read `get_session` and explicitly reconcile rather than blindly overwriting.
+Replacement is allowed only before a session starts, is cancelled, or is completed.
+Legacy routine prescriptions on or before today cannot be upgraded safely.
+
+The calendar and home screen display standalone sessions using transient routine
+projections; they are never inserted into the saved routine library. Before a new
+standalone session opens, the app claims its revision through the authenticated
+`POST /api/session-prescriptions/start` endpoint. Claim and replacement share the
+same lock. A first start requires connectivity; a claimed session can resume offline.
+This also applies when logging a missed standalone session from history.
+
+Completed workouts retain the exact prescription snapshot and revision.
+`get_session` compares actual loads, reps, time, per-side effort, skipped or partial
+sets and notes with that snapshot, and reports both actual and current revisions.
+All writes use the existing per-profile `sessions:write` scope; no additional
+account, routine, or generic state mutation tools are exposed.

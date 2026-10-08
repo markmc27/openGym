@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { readPrescriptions, createPrescription, cancelPrescription } from './prescriptions.js'
+import { createStandalonePrescription, replacePrescription } from './session-builder.js'
 const context = new AsyncLocalStorage()
 export const withProfile = (profile, fn) => context.run(profile, fn)
 export function setNextSession(input) {
@@ -17,6 +18,18 @@ export function cancelSession(sessionId) {
   const remote = context.getStore()
   const user = remote ? remote.user : getUser()
   return cancelPrescription(remote?.data || DATA_DIR, user.id, getState(), sessionId)
+}
+
+export function createSession(input) {
+  const remote = context.getStore()
+  const user = remote ? remote.user : getUser()
+  return createStandalonePrescription(remote?.data || DATA_DIR, user.id, getState(), input)
+}
+
+export function replaceSession(input) {
+  const remote = context.getStore()
+  const user = remote ? remote.user : getUser()
+  return replacePrescription(remote?.data || DATA_DIR, user.id, getState(), input)
 }
 
 const DATA_DIR = process.env.OPENGYM_DATA || path.join(process.cwd(), 'data')

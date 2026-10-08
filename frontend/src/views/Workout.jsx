@@ -73,7 +73,7 @@ function StartChooser() {
         <span className="tag acc">{t('Start')}</span></div>)}</div></>}
     <div style={{ height: 14 }} />
     <Button icon="shuffle" onClick={() => startFlow([])}>{t('Freestyle workout (pick as you go)')}</Button>
-    {!S.routines.length && <><div style={{ height: 10 }} /><Button variant="primary" onClick={() => nav('/plan')}>{t('Build a plan first')}</Button></>}
+    {!S.routines.length && !todayRoutines.length && <><div style={{ height: 10 }} /><Button variant="primary" onClick={() => nav('/plan')}>{t('Build a plan first')}</Button></>}
   </div>
 }
 
@@ -167,7 +167,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     const delta = (Number(v) || 0) - (clustersOf(row)[ci]?.r || 0)
     return { ...setClusterAt(row, ci, { r: v }), r: Math.max(0, (row.r || 0) + delta) }
   })
-  const ex = exOr(entry.id)
+  const ex = entry.exercise || exOr(entry.id)
   const thumb = !dense && S.gifSize === 'mini' && hasWorkoutMedia(ex)
   const mode = modeOf({ ...(entry.target || {}), id: entry.id })
   const cardio = mode === 'cardio'

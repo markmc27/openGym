@@ -1,6 +1,6 @@
 # openGym MCP server
 
-**This fork adds optional authenticated Streamable HTTP and immutable session prescriptions.**
+**This fork adds authenticated Streamable HTTP and versioned, standalone session prescriptions.**
 See [REMOTE.md](REMOTE.md) for the implemented transports, OAuth setup and new tools.
 The remainder describes the upstream local read tools.
 
@@ -9,7 +9,7 @@ application (Claude Desktop, Cursor, Cline, Continue, etc.) read your openGym pr
 routines, workouts, body-weight log, estimated 1RMs, and muscle balance — directly from your
 self-hosted `./data` directory.
 
-It is read-only, runs locally as a stdio process spawned by the LLM client, adds no new
+The upstream read tools run locally as a stdio process spawned by the LLM client, adding no new
 container, and requires no extra authentication. The LLM never sees passkeys, VAPID keys, or
 session secrets — it can only read the same `state-<uid>.json` files the openGym api already
 writes.
@@ -18,8 +18,8 @@ The numbers it answers with are computed by the **same pure functions the React 
 (`frontend/src/lib/*.js`) — `estimate1RM`, `loadOfWorkouts`, `effectiveRoutine`, etc. — so a
 "what's my bench 1RM?" answer matches the Stats screen exactly.
 
-> Phase 1 of a multi-phase plan. Read-only today; long-lived token auth + write tools are
-> planned but not shipped yet. See **Roadmap** below.
+> This fork also ships OAuth-protected remote access, exercise search and scoped session writes.
+> See **REMOTE.md** for the current capabilities; the roadmap below describes upstream history.
 
 ## Quick start
 

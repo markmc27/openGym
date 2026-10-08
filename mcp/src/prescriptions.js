@@ -77,6 +77,7 @@ export function cancelPrescription(data, uid, S, sessionId) {
     const store = readPrescriptions(data, uid)
     const session = store.sessions.find(s => s.id === sessionId)
     if (!session) throw new Error('session not found')
+    if (session.started_at) throw new Error('started sessions cannot be cancelled')
     if ((S?.workouts || []).some(w => w.session_id === sessionId)) throw new Error('completed sessions cannot be cancelled')
     if (!session.cancelled_at) {
       session.cancelled_at = new Date().toISOString()

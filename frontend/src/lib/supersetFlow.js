@@ -88,6 +88,8 @@ export function restSecFor(entries, unit, defaultRestSec, setRest = null) {
   return idxs.reduce((longest, idx) => {
     // `setRest` is the ticked set's own rest ({ idx, sec }, a pyramid set): it stands in for
     // that member's exercise rest, and a superset still takes the longest of the group.
+    const prescribed = entries?.[idx]?.target?.prescribedRestSec
+    if (prescribed != null && !(setRest && setRest.idx === idx && setRest.sec > 0)) return Math.max(longest,prescribed)
     const own = setRest && setRest.idx === idx && setRest.sec > 0 ? setRest.sec : entries?.[idx]?.target?.restSec
     return Math.max(longest, own > 0 ? own : fallback)
   }, 0)

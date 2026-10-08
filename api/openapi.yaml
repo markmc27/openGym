@@ -166,7 +166,7 @@ paths:
   /api/session-prescriptions:
     get:
       tags: [data]
-      summary: Read immutable dated session prescriptions for the signed-in profile
+      summary: Read dated session prescriptions and their revision history
       description: MCP-enabled instances return server-owned prescriptions and their version. Other instances return an empty object. The client must fetch this immediately before starting a prescribed workout.
       responses:
         '200':
@@ -186,6 +186,41 @@ paths:
                     minimum: 0
         '401':
           description: Not signed in
+
+  /api/session-prescriptions/start:
+    post:
+      tags: [data]
+      summary: Claim a prescription revision before starting the workout
+      description: Freezes the selected revision against replacement or cancellation. Uses the signed-in profile and ordinary same-origin protection. Identical retries return the same started prescription. Does not log completed effort.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, revision]
+              properties:
+                session_id:
+                  type: string
+                  pattern: '^[a-zA-Z0-9_-]{1,128}$'
+                revision:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+      responses:
+        '200':
+          description: Started session and refreshed prescription records
+        '400':
+          description: Invalid start request
+        '401':
+          description: Not signed in
+        '404':
+          description: MCP session support is unavailable
+        '409':
+          description: Revision conflict or session cannot be started
+        '503':
+          description: Profile state unreadable
 
   /api/health:
     get:

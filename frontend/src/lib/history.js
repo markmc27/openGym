@@ -1,5 +1,6 @@
 // Pure helpers over the state object S (ported 1:1 from the vanilla app).
 import { todayISO, isoOf, weekKey, weekStartOf, fmtNum, uid } from './format.js'
+import { prescriptionRoutineId, routinesWithSessions } from './session-plan.js'
 import { fmtSpeed } from './speed.js'
 import { isCardio, isBodyweightEq, isAssisted, betterWeight } from './exercises.js'
 import { phaseForSet, modeForSet, modeForEntry, isWarmupRow, isDropSet, isRestPauseSet, normalizeMode, completedVolumeOf, hasCompletedWork, nextDropWeight, splitBurstReps, makeSideSet, isSideSet, syncSideAggregate, WEIGHT_ORIGIN_MANUAL, dropsOf, clustersOf } from './workout-model.js'
@@ -429,7 +430,7 @@ export function bestWeightFor(S, exId) {
  */
 export function effectiveRoutineIds(S, iso, today = todayISO()) {
   const prescribed = (S.sessionPrescriptions || []).find(p => !p.cancelled_at && p.date === iso && !(S.workouts || []).some(w => w.session_id === p.id))
-  if (prescribed && S.routines.some(r => r.id === prescribed.routine_id)) return [prescribed.routine_id]
+  if (prescribed && routinesWithSessions(S).some(r => r.id === prescriptionRoutineId(prescribed))) return [prescriptionRoutineId(prescribed)]
   const ov = S.dayPlan[iso]
   if (ov === 'rest') return []
   const pin = pinState(S, ov)
@@ -443,7 +444,7 @@ export function effectiveRoutineIds(S, iso, today = todayISO()) {
   return q ? [q, ...own] : own
 }
 export function effectiveRoutines(S, iso) {
-  return effectiveRoutineIds(S, iso).map(id => S.routines.find(r => r.id === id)).filter(Boolean)
+  return effectiveRoutineIds(S, iso).map(id => routinesWithSessions(S).find(r => r.id === id)).filter(Boolean)
 }
 export const effectiveRoutineId = (S, iso) => effectiveRoutineIds(S, iso)[0] ?? null
 export const effectiveRoutine = (S, iso) => effectiveRoutines(S, iso)[0] ?? null

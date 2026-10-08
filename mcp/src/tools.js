@@ -2,8 +2,10 @@
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
 import { z } from 'zod'
-import { getState, getUser, setNextSession, cancelSession } from './state.js'
+import { getState, getUser, setNextSession, cancelSession, createSession, replaceSession } from './state.js'
 import { prescriptionSchema } from './prescriptions.js'
+import { standaloneSchema, replacementSchema, publicPrescription } from './session-builder.js'
+import { routinesWithSessions, prescriptionRoutineId } from '../../frontend/src/lib/session-plan.js'
 import { sessionComparison, prescriptionStatus, prescriptionFor, applyPrescription } from '../../frontend/src/lib/session-prescription.js'
 import {
   fmt, setLabel, exLine, muscleName, policyName, friendlyDuration, ratio, muscleOrder
@@ -12,7 +14,7 @@ import {
   modeOf, workoutVolume, setsDone, effectiveRoutine, effectiveRoutineIds, lastEntryFor
 } from '../../frontend/src/lib/history.js'
 import { queueView, queueNext, pinState } from '../../frontend/src/lib/queue.js'
-import { exOr } from '../../frontend/src/lib/exercises.js'
+import { exOr, CATALOGUE, searchScore } from '../../frontend/src/lib/exercises.js'
 import { isWarmupRow } from '../../frontend/src/lib/workout-model.js'
 import {
   bestSetOf, best1RM, e1rmSeries, DEFAULT_FORMULA, REP_CAP
@@ -190,7 +192,7 @@ export const getWeekPlan = {
     const today = new Date()
     const isoToday = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0')
     const todayWd = today.getDay()
-    const routines = S.routines || []
+    const routines = routinesWithSessions(S)
     const nameOf = id => routines.find(x => x.id === id)?.name || null
     // A weekday holds a routine-id list (combine routines); older states hold one id.
     const weekdayIds = d => [].concat(S.week?.[d] || []).filter(id => routines.some(x => x.id === id))
@@ -198,6 +200,7 @@ export const getWeekPlan = {
     const view = queueView(S, isoToday)
     // How a date's plan was decided — the same precedence as effectiveRoutineIds, named.
     const plannedBy = (iso, ids) => {
+      if ((S.sessionPrescriptions || []).some(p => !p.cancelled_at && p.date === iso && ids[0] === prescriptionRoutineId(p) && !(S.workouts || []).some(w => w.session_id === p.id))) return 'session_prescription'
       const ov = S.dayPlan?.[iso]
       if (ov === 'rest') return 'rest_override'
       const pin = pinState(S, ov)
@@ -551,7 +554,7 @@ export const previewSession = {
 
     let r
     if (routine_id) {
-      r = (S.routines || []).find(x => x.id === routine_id)
+      r = routinesWithSessions(S).find(x => x.id === routine_id)
       if (!r) { const e = new Error(`no routine with id ${JSON.stringify(routine_id)}`); e.code = 'ENOENT'; throw e }
     } else {
       r = effectiveRoutine(S, iso)
@@ -680,14 +683,29 @@ function noState() {
 }
 
 export const SESSION_TOOLS = [
+  { name:'get_profile', description:'Identify the connected profile and its load unit. Remote tools can access only this profile; use this to distinguish a test profile from your real training account.', schema:{},
+    handler:() => ({...getUser(), unit:getState()?.unit || 'kg'}) },
+  { name:'search_exercises', description:'Search the exercise catalogue and this profile\'s custom exercises. Returns reliable exercise IDs, names, equipment and muscles for composing a session. Search does not create or edit exercises.',
+    schema:{query:z.string().trim().min(1).max(120),equipment:z.string().min(1).max(80).optional(),body_part:z.string().min(1).max(80).optional(),limit:z.number().int().min(1).max(50).default(20)},
+    handler:({query,equipment,body_part,limit=20}) => {
+      const S=getState() || {}, seen=new Set()
+      const matches=[...(S.customEx || []),...CATALOGUE].filter(ex => !seen.has(ex.id) && seen.add(ex.id))
+        .filter(ex => (!equipment || (ex.eq || '').toLowerCase()===equipment.toLowerCase()) && (!body_part || (ex.bp || '').toLowerCase()===body_part.toLowerCase()))
+        .map(ex => ({ex,score:searchScore(ex,query)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.ex.id.localeCompare(b.ex.id))
+      return {unit:S.unit || 'kg',total:matches.length,exercises:matches.slice(0,limit).map(({ex})=>({id:ex.id,name:ex.n,equipment:ex.eq || null,body_part:ex.bp || null,target:ex.tg || null,secondary_muscles:ex.sm || [],custom:(S.customEx || []).some(c=>c.id===ex.id),supported_modes:ex.bp==='cardio' ? [] : ['reps','time']}))}
+    } },
+  { name:'create_session_prescription', description:'Create one dated standalone workout without creating or changing a master routine. Use search_exercises for IDs. Provide every exercise and set explicitly: reps or timed seconds, load in profile units, optional warm-up phase, per-side rep sets, adjacent superset groups, rest and coaching notes. An optional base_routine_id records provenance only. Stable IDs make identical retries safe; never substitute a smaller test workout for the requested session.',
+    schema:standaloneSchema.shape,write:true,handler:input=>publicPrescription(createSession(input)) },
+  { name:'replace_session_prescription', description:'Replace one upcoming, unstarted prescription using expected_revision from get_session. Keeps the stable session ID and archives previous versions. Refuses stale revisions and started, cancelled or completed sessions. Replacement is a complete standalone prescription, never a permanent programme edit. Identical retries are safe.',
+    schema:replacementSchema.shape,write:true,handler:input=>publicPrescription(replaceSession(input)) },
   { name: 'cancel_session_prescription', description: 'Cancel one unfinished session prescription by its stable ID. Preserves its original sets and coaching notes; never edits a routine or completed workout. Repeating the cancellation is safe.', schema: { session_id: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/) }, write: true,
-    handler: ({ session_id }) => { const { requestHash, ...saved } = cancelSession(session_id); return saved } },
+    handler: ({ session_id }) => publicPrescription(cancelSession(session_id)) },
   { name: 'set_next_session', description: 'Write one immutable, dated session prescription for an existing routine. Never changes the master routine. V1 supports straight bilateral rep sets only. Supply all exercises in routine order and a stable session_id; identical retries are safe. Load is in the profile unit. RIR/RPE are targets, not completed effort.', schema: prescriptionSchema.shape, write: true,
     handler: input => { const { requestHash, ...saved } = setNextSession(input); return saved } },
   { name: 'list_sessions', description: 'List dated prescribed sessions with stable IDs and their completion status.', schema: {},
-    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(({ requestHash, ...p }) => ({ ...p, status: prescriptionStatus(p, (S.workouts || []).find(w => w.session_id === p.id)) })) } } },
+    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(p => ({ ...publicPrescription(p), revision:p.revision || 1, status: prescriptionStatus(p, (S.workouts || []).find(w => w.session_id === p.id)) })) } } },
   { name: 'get_session', description: 'Read one prescribed session and the actual completed workout, including skipped exercises, changed rows, RIR/RPE and notes. Completed data appears after the athlete finishes and syncs.', schema: { session_id: z.string().min(1).max(128) },
-    handler: ({ session_id }) => { const S = getState(); const p = S?.sessionPrescriptions?.find(p => p.id === session_id); if (!p) throw new Error('session not found'); const { requestHash, ...safe } = p; return sessionComparison(safe, S.workouts.find(w => w.session_id === session_id), S.unit || 'kg') } },
+    handler: ({ session_id }) => { const S = getState(); const p = S?.sessionPrescriptions?.find(p => p.id === session_id); if (!p) throw new Error('session not found'); return sessionComparison(publicPrescription(p), (S.workouts || []).find(w => w.session_id === session_id), S.unit || 'kg') } },
   { name: 'get_exercise_history', description: 'Read recent completed workouts for one exercise with raw set rows, effort ratings and notes.', schema: { exercise_id: z.string().min(1).max(128), limit: z.number().int().min(1).max(100).default(20) },
     handler: ({ exercise_id, limit = 20 }) => { const S = getState(); return { unit: S?.unit || 'kg', workouts: (S?.workouts || []).filter(w => w.entries?.some(e => e.id === exercise_id)).sort((a,b) => b.d.localeCompare(a.d)).slice(0,limit).map(w => ({ id:w.id, date:w.d, session_id:w.session_id || null, note:w.note || null, entries:w.entries.filter(e => e.id === exercise_id) })) } } },
 ]

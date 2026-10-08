@@ -193,3 +193,11 @@ describe('restSecFor with a pyramid set’s own rest', () => {
     expect(restSecFor(entries, [0, 1], 120, { idx: 1, sec: 200 })).toBe(200)
   })
 })
+
+describe('explicit prescription rest', () => {
+  const entries = [{target:{restSec:0,prescribedRestSec:0}}, {target:{restSec:45,prescribedRestSec:45}}]
+  it('honours zero rest and the longest rest in a superset', () => {
+    expect(restSecFor(entries, [0], 90)).toBe(0)
+    expect(restSecFor(entries, [0,1], 90)).toBe(45)
+  })
+})

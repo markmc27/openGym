@@ -18,7 +18,8 @@ test('MCP-enabled API isolates prescription files from whole-state sync and othe
   fs.writeFileSync(path.join(data,'db.json'),JSON.stringify({users:[{id:'a',name:'A',admin:true},{id:'b',name:'B'}],creds:[],subs:[],invites:[]}))
   const state={workouts:[],routines:[],unit:'kg',_rev:1}
   fs.writeFileSync(path.join(data,'state-a.json'),JSON.stringify(state))
-  fs.writeFileSync(path.join(data,'prescriptions-a.json'),JSON.stringify({version:1,sessions:[{id:'session-a',date:'2026-10-11',routine_id:'lower',unit:'kg',notes:'Private A',exercises:[]}]}))
+  const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+  fs.writeFileSync(path.join(data,'prescriptions-a.json'),JSON.stringify({version:1,sessions:[{id:'session-a',date,routine_id:'lower',unit:'kg',notes:'Private A',exercises:[]}]}))
   const child=spawn(process.execPath,['server.js'],{cwd:API,stdio:['ignore','pipe','pipe'],env:{...process.env,PORT:'0',DATA_DIR:data,ORIGIN:'http://localhost:8090',RP_ID:'localhost',MCP_ENABLED:'1'}})
   t.after(()=>{child.kill('SIGKILL');fs.rmSync(data,{recursive:true,force:true})})
   let log=''; child.stdout.on('data',d=>{log+=d});child.stderr.on('data',d=>{log+=d})
@@ -31,6 +32,16 @@ test('MCP-enabled API isolates prescription files from whole-state sync and othe
   const got=await req('/api/data');assert.equal(got.status,200);assert.equal(got.json().state.sessionPrescriptions[0].notes,'Private A')
   const rev=await req('/api/data/rev');assert.equal(rev.json().sessionPrescriptionsVersion,1)
   const other=await req('/api/session-prescriptions','GET',null,'b');assert.equal(other.json().sessionPrescriptions.length,0)
+  const startBody={session_id:'session-a',revision:1}
+  assert.equal((await req('/api/session-prescriptions/start','POST',startBody,'b')).status,409)
+  assert.equal((await req('/api/session-prescriptions/start','POST',startBody,'missing')).status,401)
+  assert.equal((await req('/api/session-prescriptions/start','POST',{...startBody,revision:2})).status,409)
+  assert.equal((await req('/api/session-prescriptions/start','POST',{...startBody,state:{}})).status,400)
+  const started=await req('/api/session-prescriptions/start','POST',startBody)
+  assert.equal(started.status,200)
+  assert.ok(started.json().session.started_at)
+  const again=await req('/api/session-prescriptions/start','POST',startBody)
+  assert.equal(again.json().sessionPrescriptionsVersion,started.json().sessionPrescriptionsVersion)
   const p=await req('/api/data','PUT',{state:{...state,sessionPrescriptions:[{id:'forged'}],sessionPrescriptionsVersion:999},baseRev:1});assert.equal(p.status,200)
   const after=await req('/api/data');assert.equal(after.json().state.sessionPrescriptions[0].id,'session-a')
   const saved=JSON.parse(fs.readFileSync(path.join(data,'state-a.json')));assert.equal(saved.sessionPrescriptions,undefined)
