@@ -8,6 +8,11 @@ services:
     cpus: 0.5
   api:
     image: opengym-api:coaching
+    user: '1000:1000'
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     build:
       context: .
       dockerfile: api/Dockerfile.mcp

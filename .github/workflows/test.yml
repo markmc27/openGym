@@ -188,14 +188,29 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker build -f api/Dockerfile.mcp -t opengym-api:mcp .
-      - name: MCP image boots and requires authentication
+      - name: MCP image runs without root and requires authentication
         run: |
-          docker run -d --name api-mcp -e DATA_DIR=/data -e ORIGIN=http://localhost:8090 -e RP_ID=localhost -p 8090:3000 opengym-api:mcp
+          docker run -d --name api-mcp --cap-drop ALL --security-opt no-new-privileges:true -e DATA_DIR=/data -e ORIGIN=http://localhost:8090 -e RP_ID=localhost -p 8090:3000 opengym-api:mcp
           for i in $(seq 1 30); do
             curl -fsS http://localhost:8090/api/health >/dev/null 2>&1 && break
             sleep 1
           done
           curl -fsS http://localhost:8090/api/health
+          docker exec api-mcp node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            import { atomicWrite } from "./durable.js";
+            assert.equal(process.getuid(), 1000);
+            const status = fs.readFileSync("/proc/1/status", "utf8");
+            assert.match(status, /^Uid:\s+1000\s+1000\s+1000\s+1000$/m);
+            assert.match(status, /^CapEff:\s+0+$/m);
+            assert.match(status, /^NoNewPrivs:\s+1$/m);
+            const probe = "/data/.nonroot-smoke";
+            atomicWrite(probe, "ok", 0o600);
+            assert.equal(fs.readFileSync(probe, "utf8"), "ok");
+            fs.unlinkSync(probe);
+            assert.throws(() => fs.accessSync("/app/api", fs.constants.W_OK), { code: "EACCES" });
+          '
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8090/mcp)" = 401
           curl -fsS http://localhost:8090/.well-known/oauth-protected-resource/mcp
       - if: always()

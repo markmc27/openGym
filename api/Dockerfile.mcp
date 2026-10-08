@@ -13,6 +13,10 @@ COPY frontend/package.json /app/frontend/package.json
 COPY frontend/src/lib /app/frontend/src/lib
 WORKDIR /app/api
 ENV NODE_ENV=production PORT=3000 MCP_ENABLED=1 TZ=Europe/London
+# UID/GID 1000 are provided by the Node image. Keep application code root-owned;
+# only the data directory belongs to the runtime user (bind mounts need the same owner).
+RUN mkdir -p /data && chown node:node /data
+USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget --spider -q http://127.0.0.1:3000/api/health || exit 1
 CMD ["node", "server.js"]
