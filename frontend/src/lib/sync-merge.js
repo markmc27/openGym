@@ -397,7 +397,7 @@ const RESET_LISTS = {
   workouts: workoutKey, routines: x => x?.id, customEx: x => x?.id, bodyweight: bodyweightKey,
   gymCards: x => x?.id, equipProfiles: x => x?.id, favEx: x => x,
 }
-const RESET_MAPS = ['exNotes', 'barWeights', 'balanceOverrides', 'loadKind', 'plates']
+const RESET_MAPS = ['exNotes', 'barWeights', 'balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']
 /** An entry's name in resetIds: a workout's id (or day and start), a weigh-in's day and time, … */
 export const entryKey = (field, x) => String(RESET_LISTS[field](x))
 // Per field, the most names a reset keeps — far more workouts than anyone logs, and a bound on
@@ -456,7 +456,7 @@ export function sinceReset(S, at, ids) {
     out.favEx = []
     out.exNotes = {}
     out.barWeights = {}
-    for (const f of ['balanceOverrides', 'loadKind', 'plates']) {
+    for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) {
       out[f] = Object.fromEntries(Object.entries(isMap(S[f]) ? S[f] : {}).filter(([, v]) => after(stampOf(v))))
     }
   }
@@ -605,7 +605,7 @@ function applyDeletions(S, deleted) {
 const OWN_MERGE = new Set([
   '_ts', '_rev', '_wid', '_wids', '_unstamped', '_prior', 'active', 'unit', 'unitSet', 'resetAt', 'resetIds', 'deleted', 'edited', 'undone', 'routineOrder',
   'workouts', 'routines', 'customEx', 'equipProfiles', 'gymCards', 'bodyweight', 'favEx',
-  'exWeights', 'balanceOverrides', 'loadKind', 'plates',
+  'exWeights', 'balanceOverrides', 'loadKind', 'plates', 'exerciseContexts',
 ])
 // Stamped per key instead of whole: one day of the plan, one exercise's note or bar.
 const PER_KEY = new Set(['week', 'dayPlan', 'exNotes', 'barWeights'])
@@ -842,7 +842,7 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   // The plate-loading choices (lib/plates.js) are stamped the same way: an exercise's loading and
   // a unit's plate inventory are each one choice, made on one device, that a later set logged on
   // the other must not undo.
-  for (const f of ['balanceOverrides', 'loadKind', 'plates']) {
+  for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) {
     if (n[f] || o[f]) out[f] = clone(mergeStampedMap(n[f], o[f], prefer))
   }
   // Each stamped setting and plan day from the copy that changed it last (the `edited` section
@@ -965,7 +965,7 @@ export function stampReplace(next, others = [], now = Date.now()) {
       x._ts = Math.max(Number(x._ts) || 0, now)
     }
   }
-  for (const f of ['balanceOverrides', 'loadKind', 'plates']) {
+  for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) {
     if (!isMap(next[f])) continue
     for (const [k, v] of Object.entries(next[f])) {
       if (!isMap(v)) continue
@@ -1001,7 +1001,7 @@ export function highestStamp(S) {
       if (isMap(x._f)) for (const v of Object.values(x._f)) see(v)
     }
   }
-  for (const f of ['balanceOverrides', 'loadKind', 'plates']) if (isMap(S[f])) for (const v of Object.values(S[f])) see(stampOf(v))
+  for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) if (isMap(S[f])) for (const v of Object.values(S[f])) see(stampOf(v))
   for (const e of list(S.bodyweight)) if (e && typeof e === 'object') see(e.t)
   return m
 }
@@ -1023,7 +1023,7 @@ export function stampChange(prev, next, wall = Date.now()) {
   }
   // Settings maps whose entries carry their own stamp (mergeStampedMap): an entry the change
   // re-stamped takes the change's time.
-  for (const f of ['balanceOverrides', 'loadKind', 'plates']) {
+  for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) {
     const p = isMap(prev?.[f]) ? prev[f] : {}, n = isMap(next[f]) ? next[f] : null
     if (!n) continue
     for (const [k, v] of Object.entries(n)) if (isMap(v) && v._ts != null && stampOf(v) !== stampOf(p[k])) v._ts = now

@@ -1,3 +1,7 @@
+import ExerciseSetupSheet from './components/ExerciseSetupSheet.jsx'
+import SessionComparisonPanel from './components/SessionComparisonPanel.jsx'
+import SessionContextFields from './components/SessionContextFields.jsx'
+import { LOAD_CONVENTIONS } from './lib/training-context.js'
 import { api } from './lib/api.js'
 import { prescriptionFor, applyPrescription } from './lib/session-prescription.js'
 import { routinesWithSessions, prescriptionRoutineId } from './lib/session-plan.js'
@@ -913,6 +917,7 @@ function ExerciseDetail({ ex, close }) {
     {best > 0 && <div className="small row" style={{ marginBottom: 6, gap: 5 }}><Icon name="trophy" style={{ fontSize: 14, color: 'var(--yellow)' }} />{t('Best:')} <b className="accent" style={{ whiteSpace: 'nowrap' }}>{fmtNum(best)} {st.unit}</b>{last ? ` · ${t('last')} ${fmtDate(last.d)}: ${last.sets.map(s => setLabel(ex.id, s, last.target, speedUnitOf(st))).join(', ')}` : ''}</div>}
     <Button variant="primary" icon="plus" style={{ margin: '10px 0 4px' }} onClick={() => addToRoutineSheet(ex)}>{t('Add to my plan')}</Button>
     {last && <Button icon="history" style={{ marginTop: 4 }} onClick={() => exerciseHistorySheet(ex.id)}>{t('History')}</Button>}
+    <Button style={{marginTop:4}} onClick={()=>ui().openSheet(close=><ExerciseSetupSheet ex={ex} close={close} />)}>Load convention &amp; setup</Button>
     {isCustomEx(ex) && <div className="row" style={{ gap: 8, marginTop: 8 }}>
       <Button icon="pencil" style={{ flex: 1 }} onClick={() => { close(); customExSheet(ex) }}>{t('Edit')}</Button>
       <Button variant="danger" icon="trash" style={{ flex: 1 }} onClick={() => deleteCustomEx(ex, close)}>{t('Delete')}</Button>
@@ -1300,7 +1305,7 @@ export function swapActiveWorkoutExercise(index) {
       ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(past, full, { step, preferLast: true }), full, dropGrid(st, full)) }
       : buildPlannedEntry(past, full, slotRoutine, { noProg: builtOutOfProgression(current, slotRoutine) })
     const replacement = {
-      id: ex.id,
+      id: ex.id, exercise: structuredClone(ex),
       ...built,
       ...(current.rid ? { rid: current.rid } : {}),
       // A slot kept out of progression stays out once swapped. Replaced in place the entry keeps
@@ -1318,7 +1323,7 @@ export function swapActiveWorkoutExercise(index) {
       ui().stopRest()
       update(state => { swapActiveExercise(state.active, index, replacement, options) }, true)
     }
-    const logged = (current.sets || []).some(set => set.done === true)
+    const logged = (current.sets || []).some(hasCompletedWork)
     if (!logged) { apply(); return }
 
     if (current.sg) {
@@ -2197,15 +2202,16 @@ function WorkoutDetail({ w, close }) {
       stampWorkout(rec)
     })
   }, [])
-  const nameOf = e => (EXIDX[e.id] ? exerciseNameFor(EXIDX[e.id]) : (e.n || e.id))
+  const nameOf = e => (e.exercise || EXIDX[e.id] ? exerciseNameFor(e.exercise || EXIDX[e.id]) : (e.n || e.id))
   // Tapping an exercise opens its history (Discord 'Improvement ideas'): from one session to the
   // curve it sits on, which is the question a past workout raises most often.
   const entryRow = (e, i) => {
-    const ex = EXIDX[e.id]
+    const ex = e.exercise || EXIDX[e.id]
     return <div key={i} className="row wd-ex" style={{ alignItems: 'flex-start' }} {...tappable(() => exerciseHistorySheet(e.id))}>
       {ex && <Thumb ex={ex} />}
       <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`} style={{ fontWeight: 600 }}>{nameOf(e)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
         <div className="ss">{e.sets.filter(hasCompletedWork).map(s => setLabel(e.id, s, e.target, speedUnitOf(st))).join('  ·  ') || t('no sets')}</div>
+        {e.loadConvention && <div className="small dim">Load: {e.loadConvention}{e.setupContext?.machine ? ` · ${e.setupContext.machine}` : ''}</div>}
         {e.note && <div className="small dim" style={{ marginTop: 3 }}>
           {e.notePin && <Icon name="pin" style={{ fontSize: 12, marginInlineEnd: 4, verticalAlign: '-1px', color: 'var(--yellow)' }} />}{e.note}
         </div>}</div>
@@ -2235,6 +2241,7 @@ function WorkoutDetail({ w, close }) {
   const grouped = groups.length > 1 || (groups[0] && groups[0].rid && (w.routineIds || []).length > 1)
   return <>
     <h3>{w.name}</h3>
+    {w.prescription && <details><summary>Planned vs completed</summary><SessionComparisonPanel prescription={w.prescription} workout={w} unit={st.unit} /></details>}
     <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(w.vol, st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
     {grouped ? groups.map(g => {
       const r = g.rid ? st.routines.find(x => x.id === g.rid) : null
@@ -2382,7 +2389,7 @@ export function WorkoutRow({ w, onClick }) {
 // `routineIds` accepts `string | string[] | null` — `[r.id]` for one routine,
 // `effectiveRoutineIds(...)` for today's planned session, `[]` / null for explicit freestyle.
 let pendingStart = false
-export function startFlow(routineIds) {
+export function startFlow(routineIds, { readiness } = {}) {
   if (pendingStart || S().active) return
   const owner = useStore.getState().user?.id
   const date = todayISO()
@@ -2403,7 +2410,7 @@ export function startFlow(routineIds) {
         } catch (e) { toast(e.message); return }
       }
       if (prescribed?.schema_version === 2 && !claimed?.started_at) { toast('Connect to the server once to start this prescribed session.'); return }
-      if (stillCurrent()) beginWorkout(routineIds, bw, claimed || null)
+      if (stillCurrent()) beginWorkout(routineIds, bw, claimed || null, readiness)
     }
     if (st.weighIn === false) return begin(null)
     else bwSheet({ required: true, onDone: begin })
@@ -2420,7 +2427,7 @@ export function startFlow(routineIds) {
   }
   open({})
 }
-export function beginWorkout(routineIds, bw, prescribed) {
+export function beginWorkout(routineIds, bw, prescribed, readiness) {
   const st = S()
   const buildState = prescribed ? {...st,sessionPrescriptions:[...(st.sessionPrescriptions || []).filter(p => p.id !== prescribed.id),prescribed]} : st
   const built = buildCombinedEntries(buildState, routineIds)
@@ -2432,6 +2439,7 @@ export function beginWorkout(routineIds, bw, prescribed) {
   update(s => {
     s.active = {
       id: prescription?.id || uid(), d: todayISO(), start: Date.now(),
+      ...(readiness && Object.keys(readiness).length ? {readiness:structuredClone(readiness)} : {}),
       ...(prescription ? { session_id: prescription.id, prescription: structuredClone(prescription), coachingNotes: prescription.notes || '' } : {}),
       // A session tracks its routines as a list; per-entry `rid` carries which one each
       // exercise came from. No top-level `excludeFromProgression` — per-entry `noProg` does it.
@@ -2666,6 +2674,10 @@ function ExerciseNote({ entryIdx, close }) {
   const [note, setNote] = useState(entry?.note || '')
   const [pin, setPin] = useState(!!entry?.notePin)
   const [standing, setStanding] = useState(entry ? (st.exNotes?.[entry.id] || '') : '')
+  const [convention,setConvention]=useState(st.exerciseContexts?.[entry?.id]?.load_convention || 'unspecified')
+  const [machine,setMachine]=useState(st.exerciseContexts?.[entry?.id]?.machine || '')
+  const [aliases,setAliases]=useState((st.exerciseContexts?.[entry?.id]?.aliases || []).join(', '))
+  const [swapReason,setSwapReason]=useState(entry?.substitution?.reason || '')
   useEffect(() => { if (!entry) close() }, [!entry])
   if (!entry) return null
 
@@ -2675,10 +2687,14 @@ function ExerciseNote({ entryIdx, close }) {
     update(s => {
       const e = s.active?.entries?.[entryIdx]
       if (e) {
+        if (e.substitution) e.substitution.reason=swapReason.trim().slice(0,NOTE_MAX)
         if (today) { e.note = today; if (pin) e.notePin = true; else delete e.notePin }
         else { delete e.note; delete e.notePin }
       }
       if (!editing) {
+        s.exerciseContexts = s.exerciseContexts || {}
+        s.exerciseContexts[entry.id]={load_convention:convention,machine:machine.trim().slice(0,200),aliases:aliases.split(',').map(v=>v.trim().slice(0,100)).filter(Boolean).slice(0,5),_ts:Date.now()}
+        if (e) { e.loadConvention=LOAD_CONVENTIONS[convention];e.setupContext={...(e.setupContext || {}),load_convention:convention,load_convention_label:LOAD_CONVENTIONS[convention],machine:machine.trim().slice(0,200),setup_notes:always || null} }
         s.exNotes = s.exNotes || {}
         if (always) s.exNotes[entry.id] = always
         else delete s.exNotes[entry.id]
@@ -2689,6 +2705,7 @@ function ExerciseNote({ entryIdx, close }) {
 
   return <>
     <h3 className={exerciseNameClass(ex)}>{exerciseNameFor(ex)}</h3>
+    {entry.substitution && <label>Reason for replacement<textarea className="input" maxLength={NOTE_MAX} value={swapReason} onChange={e=>setSwapReason(e.target.value)} /></label>}
     <div className="small muted" style={{ marginBottom: 6 }}>{t('This session')}</div>
     <textarea ref={noteRef} className="input" rows={3} maxLength={NOTE_MAX} value={note}
       placeholder={t('How it went, what to change. Saved with today’s workout.')}
@@ -2702,6 +2719,9 @@ function ExerciseNote({ entryIdx, close }) {
     </div>
     {!editing && <>
       <div style={{ height: 18 }} />
+      <label>Logged load means<select className="input" value={convention} onChange={e=>setConvention(e.target.value)}>{Object.entries(LOAD_CONVENTIONS).map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></label>
+      <label>Gym / machine<input className="input" maxLength={200} value={machine} onChange={e=>setMachine(e.target.value)} /></label>
+      <label>Familiar names (comma separated)<input className="input" maxLength={500} value={aliases} onChange={e=>setAliases(e.target.value)} /></label>
       <div className="small muted" style={{ marginBottom: 6 }}>{t('Always for this exercise')}</div>
       <textarea className="input" rows={2} maxLength={NOTE_MAX} value={standing}
         placeholder={t('Seat height, pin position, a form cue. Shown every session.')}
@@ -2725,12 +2745,14 @@ function SessionNote({ close }) {
   const update = useStore(s => s.update)
   const A = st.active
   const [note, setNote] = useState(A?.note || '')
+  const [readiness,setReadiness]=useState(A?.readiness || {})
+  const [deviation,setDeviation]=useState(A?.deviationReason || '')
   useEffect(() => { if (!A) close() }, [!A])
   if (!A) return null
 
   const save = () => {
     const text = note.trim().slice(0, NOTE_MAX)
-    update(s => { if (!s.active) return; if (text) s.active.note = text; else delete s.active.note })
+    update(s => { if (!s.active) return; s.active.readiness=readiness;s.active.deviationReason=deviation.trim().slice(0,NOTE_MAX); if (text) s.active.note = text; else delete s.active.note })
     close()
   }
 
@@ -2739,6 +2761,8 @@ function SessionNote({ close }) {
     <textarea ref={noteRef} className="input" rows={4} maxLength={NOTE_MAX} value={note}
       placeholder={t('How the session went as a whole.')}
       onFocus={onNoteFocus} onChange={e => setNote(e.target.value)} />
+    <details><summary>Check-in and reasons for changes (optional)</summary><SessionContextFields value={readiness} onChange={setReadiness} />
+    <label>Reason for changes or skipped work<textarea className="input" rows={2} maxLength={NOTE_MAX} value={deviation} onChange={e=>setDeviation(e.target.value)} /></label></details>
     <div style={{ height: 18 }} />
     <Button variant="primary" onClick={save}>{t('Save')}</Button>
   </>

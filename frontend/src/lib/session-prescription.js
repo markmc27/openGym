@@ -5,6 +5,7 @@ import { makeSideSet, hasCompletedWork, isSideSet } from './workout-model.js'
 
 export function prescriptionStatus(p, workout, today = todayISO()) {
   if (workout) return 'completed'
+  if (p.abandoned_at) return 'abandoned'
   if (p.cancelled_at) return 'cancelled'
   if (p.started_at) return 'in_progress'
   return p.date < today ? 'expired' : 'planned'
@@ -19,7 +20,7 @@ export function assertPrescriptionCompatible(cfg) {
 // A dated prescription belongs to one session, never to its master routine.
 export function prescriptionFor(S, date, routineIds) {
   const ids = [].concat(routineIds || [])
-  return (S.sessionPrescriptions || []).find(p => !p.cancelled_at && p.date === date
+  return (S.sessionPrescriptions || []).find(p => !p.cancelled_at && !p.abandoned_at && p.date === date
     && ids.length === 1 && prescriptionRoutineId(p) === ids[0]
     && !(S.workouts || []).some(w => w.session_id === p.id)) || null
 }
@@ -38,6 +39,7 @@ export function applyPrescription(entries, prescription, unit) {
       plan: null,
       ...(prescribed.exercise ? { exercise: structuredClone(prescribed.exercise) } : {}),
       coachingNotes: prescribed.notes || '',
+      ...(prescribed.context ? { setupContext:structuredClone(prescribed.context), loadConvention:prescribed.context.load_convention_label } : {}),
       sets: prescribed.sets.map((s, i) => {
         const row = {
           w:s.load * factor, r:(s.reps || 0) * (prescribed.unilateral ? 2 : 1), done:false,
@@ -70,9 +72,12 @@ export function sessionComparison(prescription, workout, actualUnit = prescripti
     // Preserve raw rows including RPE/RIR, unilateral sides, warm-ups and drop sets.
     completed: workout || null,
     exercises: prescription.exercises.map(p => {
-      const actual = (workout?.entries || []).find(e => e.rid === prescriptionRoutineId(prescription) && e.id === p.exercise_id)
+      const recorded = [...(workout?.entries || []),...(workout?.skippedExercises || [])]
+      const actual = recorded.find(e => e.rid === prescriptionRoutineId(prescription) && e.id === p.exercise_id)
+      const substitutes = recorded.filter(e => e.substitution?.position === p.position && e.substitution?.prescribed_exercise_id === p.exercise_id)
       return { position: p.position, exercise_id: p.exercise_id, prescribed_sets: p.sets,
-        actual_sets: actual?.sets || [], extra_sets: (actual?.sets || []).filter(s => s.prescriptionSet == null), skipped_exercise: !!workout && !actual, note: actual?.note || null,
+        substitutions: substitutes.map(e => ({ exercise_id:e.id, exercise:e.exercise || null, reason:e.substitution.reason || e.note || null, actual_sets:e.sets })),
+        actual_sets: actual?.sets || [], extra_sets: (actual?.sets || []).filter(s => s.prescriptionSet == null), skipped_exercise: !!workout && !(actual?.sets || []).some(hasCompletedWork) && !substitutes.length, note: actual?.note || null,
         comparison: p.sets.map((planned, i) => {
           const row = actual?.sets?.find(s => s.prescriptionSet === i + 1)
           const factor = actualUnit === prescription.unit ? 1 : actualUnit === 'lb' ? 1 / 2.2046226218 : 2.2046226218
@@ -81,7 +86,7 @@ export function sessionComparison(prescription, workout, actualUnit = prescripti
             reps_difference:value?.done ? value.r - planned.reps : null,
             rir:value?.rir ?? null,rpe:value?.rpe ?? null})
           const unilateral = isSideSet(row)
-          return { set: i + 1, phase:planned.phase || 'work', status: !workout ? 'planned' : !row || !hasCompletedWork(row) ? 'skipped' : row.done ? 'completed' : 'partially_completed',
+          return { set: i + 1, phase:planned.phase || 'work', status: !workout ? 'planned' : !row || !hasCompletedWork(row) ? substitutes.length ? 'substituted' : 'skipped' : row.done ? 'completed' : 'partially_completed',
             ...(unilateral ? {sides:{L:side(row.sides.L),R:side(row.sides.R)}} : {}),
             actual_load_in_prescribed_unit: row?.done ? row.w * factor : null,
             load_difference: row?.done && !unilateral ? row.w * factor - planned.load : null,

@@ -1,3 +1,4 @@
+import { exerciseContext, equipmentContext } from '../../frontend/src/lib/training-context.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -103,17 +104,17 @@ function prepare(S, input) {
     for (const key of ['sm','primaries','secondaries','muscleGroups']) {
       if (Array.isArray(ex[key])) snapshot[key] = ex[key].filter(v => typeof v === 'string').slice(0,30).map(v => v.slice(0,200))
     }
-    return { ...e, exercise: snapshot }
+    return { ...e, exercise: snapshot, context:exerciseContext(S,ex,(S.routines || []).flatMap(r=>r.ex || []).find(c=>c.id===ex.id) || {}) }
   })
   for (const positions of groups.values()) {
     if (positions.length < 2 || positions.at(-1)-positions[0]+1 !== positions.length) throw new Error('a superset must contain at least two adjacent exercises')
   }
   const { session_id, ...rest } = input
-  return { ...rest, id: session_id, kind:'standalone', schema_version:2, exercises }
+  return { ...rest, id: session_id, kind:'standalone', schema_version:2, equipment_context:equipmentContext(S), exercises }
 }
 
 function checkDateCapacity(store, S, p, exceptId) {
-  const pending = store.sessions.filter(s => s.id !== exceptId && !s.cancelled_at && !(S.workouts || []).some(w => w.session_id === s.id))
+  const pending = store.sessions.filter(s => s.id !== exceptId && !s.cancelled_at && !s.abandoned_at && !(S.workouts || []).some(w => w.session_id === s.id))
   if (pending.some(s => s.date === p.date)) throw new Error('an unfinished prescription already exists for this date')
   if (pending.filter(s => s.date >= isoToday()).length >= 20) throw new Error('at most 20 unfinished prescriptions')
 }
@@ -147,7 +148,7 @@ export function replacePrescription(data, uid, S, input) {
     // A lost response can be retried without making another revision.
     if (revision === parsed.expected_revision+1 && previous.requestHash === requestHash) return {session:previous,changed:false}
     if (revision !== parsed.expected_revision) throw new Error('revision conflict; read get_session before retrying')
-    if (previous.started_at || previous.cancelled_at || (S?.workouts || []).some(w => w.session_id === previous.id)) throw new Error('only an unstarted, uncancelled session can be replaced')
+    if (previous.started_at || previous.cancelled_at || previous.abandoned_at || (S?.workouts || []).some(w => w.session_id === previous.id)) throw new Error('only an unstarted, uncancelled session can be replaced')
     if (previous.schema_version !== 2 && previous.date <= isoToday()) throw new Error('legacy sessions on or before today cannot be replaced safely')
     if (revision >= 20) throw new Error('at most 20 revisions per session')
     const p = prepare(S, request)
@@ -166,10 +167,54 @@ export function startPrescription(data, uid, S, sessionId, expectedRevision) {
     const p = store.sessions.find(s => s.id === sessionId)
     if (!p) throw new Error('session not found')
     if ((p.revision || 1) !== expectedRevision) throw new Error('revision conflict; refresh the session')
-    if (p.cancelled_at || (S?.workouts || []).some(w => w.session_id === p.id)) throw new Error('session is cancelled or completed')
+    if (p.cancelled_at || p.abandoned_at || (S?.workouts || []).some(w => w.session_id === p.id)) throw new Error('session is cancelled or completed')
     if (p.date > isoToday()) throw new Error('cannot start a future session')
     if (p.started_at) return {session:p,changed:false}
     p.started_at = new Date().toISOString()
     return {session:p,changed:true}
   })
+}
+
+// Abandonment is a terminal audit record, never an unlock of an opened revision.
+const actualRow = z.object({
+  load:z.number().finite().min(0).max(2000), reps:z.number().int().min(0).max(10000).optional(),
+  seconds:z.number().finite().min(0).max(86400).optional(), minutes:z.number().finite().min(0).max(1440).optional(),
+  speed:z.number().finite().min(0).max(200).optional(), done:z.boolean(),
+  side:z.enum(['L','R']).optional(), phase:z.enum(['warmup','work']).optional(),
+  rir:z.number().finite().min(0).max(10).optional(), rpe:z.number().finite().min(1).max(10).optional(),
+}).strict()
+const readiness = z.object({
+  available_minutes:z.number().int().min(1).max(1440).optional(),energy:z.number().int().min(1).max(5).optional(),
+  soreness:z.number().int().min(0).max(10).optional(),discomfort_location:z.string().max(100).optional(),
+  discomfort_intensity:z.number().int().min(0).max(10).optional(),context:z.string().max(1000).optional(),
+}).strict()
+export const abandonmentSchema = z.object({
+  session_id:id, revision:z.number().int().min(1).max(20), reason:note,
+  unit:z.enum(['kg','lb']).optional(),readiness:readiness.optional(),
+  performed:z.array(z.object({exercise_id:id,note:note.optional(),substitution:z.object({prescribed_exercise_id:id,position:z.number().int().min(1).max(100),reason:note.optional()}).strict().optional(),sets:z.array(actualRow).max(600)}).strict()).max(100),
+}).strict().refine(v => v.performed.reduce((n,e)=>n+e.sets.length,0)<=600,'at most 600 actual rows')
+export function abandonPrescription(data, uid, S, input) {
+  const parsed=abandonmentSchema.parse(input)
+  return mutate(data,uid,store=>{
+    const p=store.sessions.find(s=>s.id===parsed.session_id)
+    if (!p) throw new Error('session not found')
+    if ((p.revision || 1)!==parsed.revision) throw new Error('revision conflict; refresh the session')
+    if ((S?.workouts || []).some(w=>w.session_id===p.id)) throw new Error('completed session cannot be abandoned')
+    if (p.abandoned_at) return {session:p,changed:false}
+    if (!p.started_at || p.cancelled_at) throw new Error('only a started session can be abandoned')
+    p.abandoned_at=new Date().toISOString()
+    p.abandonment={reason:parsed.reason,performed:parsed.performed,unit:parsed.unit || S?.unit || p.unit,...(parsed.readiness ? {readiness:parsed.readiness} : {})}
+    return {session:p,changed:true}
+  })
+}
+
+export const postponementSchema = z.object({session_id:id,revision:z.number().int().min(1).max(20),date}).strict()
+export function postponePrescription(data, uid, S, input) {
+  const parsed=postponementSchema.parse(input)
+  const p=readPrescriptions(data,uid).sessions.find(p=>p.id===parsed.session_id)
+  if (!p) throw new Error('session not found')
+  if (p.kind!=='standalone') throw new Error('ask the coach to replace this legacy prescription with a standalone session')
+  const {id:session_id,title,unit,notes,base_routine_id}=p
+  const exercises=p.exercises.map(({exercise,context,...e})=>e)
+  return replacePrescription(data,uid,S,{session_id,expected_revision:parsed.revision,prescription:{title,unit,date:parsed.date,notes,base_routine_id,exercises}})
 }

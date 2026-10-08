@@ -222,6 +222,106 @@ paths:
         '503':
           description: Profile state unreadable
 
+  /api/session-prescriptions/postpone:
+    post:
+      tags: [data]
+      summary: Postpone one unstarted standalone session
+      description: Keeps the stable ID, creates a new revision and archives the previous prescription. Uses ordinary profile authentication and same-origin protection. Refuses started, cancelled, abandoned or completed sessions, occupied dates and stale revisions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, revision, date]
+              properties:
+                session_id: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+                revision: { type: integer, minimum: 1, maximum: 20 }
+                date: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated session and refreshed prescription records
+        '400':
+          description: Invalid request
+        '401':
+          description: Not signed in
+        '404':
+          description: MCP session support is unavailable
+        '409':
+          description: Revision conflict or incompatible lifecycle state
+        '503':
+          description: Profile state unreadable
+
+  /api/session-prescriptions/abandon:
+    post:
+      tags: [data]
+      summary: Close a started prescription and retain partial results
+      description: Terminal audit record; never unlocks the opened revision or changes a master routine. Idempotent retries preserve the first abandonment. At most 600 actual rows across all exercises. Requires profile authentication and ordinary same-origin protection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, revision, reason, performed]
+              properties:
+                session_id: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+                revision: { type: integer, minimum: 1, maximum: 20 }
+                reason: { type: string, maxLength: 2000 }
+                unit: { type: string, enum: [kg, lb] }
+                readiness: { $ref: '#/components/schemas/SessionReadiness' }
+                performed:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [exercise_id, sets]
+                    properties:
+                      exercise_id: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+                      note: { type: string, maxLength: 2000 }
+                      substitution:
+                        type: object
+                        additionalProperties: false
+                        required: [prescribed_exercise_id, position]
+                        properties:
+                          prescribed_exercise_id: { type: string, pattern: '^[a-zA-Z0-9_-]{1,128}$' }
+                          position: { type: integer, minimum: 1, maximum: 100 }
+                          reason: { type: string, maxLength: 2000 }
+                      sets:
+                        type: array
+                        maxItems: 600
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [load, done]
+                          properties:
+                            load: { type: number, minimum: 0, maximum: 2000 }
+                            done: { type: boolean }
+                            reps: { type: integer, minimum: 0, maximum: 10000 }
+                            seconds: { type: number, minimum: 0, maximum: 86400 }
+                            minutes: { type: number, minimum: 0, maximum: 1440 }
+                            speed: { type: number, minimum: 0, maximum: 200 }
+                            side: { type: string, enum: [L, R] }
+                            phase: { type: string, enum: [warmup, work] }
+                            rir: { type: number, minimum: 0, maximum: 10 }
+                            rpe: { type: number, minimum: 1, maximum: 10 }
+      responses:
+        '200':
+          description: Updated session and refreshed prescription records
+        '400':
+          description: Invalid request
+        '401':
+          description: Not signed in
+        '404':
+          description: MCP session support is unavailable
+        '409':
+          description: Revision conflict or incompatible lifecycle state
+        '503':
+          description: Profile state unreadable
+
   /api/health:
     get:
       tags: [meta]
@@ -3120,6 +3220,16 @@ components:
           example: { error: "that code is wrong, used or expired", code: "link-invalid" }
 
   schemas:
+    SessionReadiness:
+      type: object
+      additionalProperties: false
+      properties:
+        available_minutes: { type: integer, minimum: 1, maximum: 1440 }
+        energy: { type: integer, minimum: 1, maximum: 5 }
+        soreness: { type: integer, minimum: 0, maximum: 10 }
+        discomfort_location: { type: string, maxLength: 100 }
+        discomfort_intensity: { type: integer, minimum: 0, maximum: 10 }
+        context: { type: string, maxLength: 1000 }
     Error:
       type: object
       required: [error]

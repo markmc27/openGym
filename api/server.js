@@ -2117,6 +2117,34 @@ const routes = {
     } catch (e) { json(res, 409, { error:e.message }); }
   },
 
+  'POST /api/session-prescriptions/postpone': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error:'not signed in' });
+    if (!sessionBuilder) return json(res, 404, { error:'MCP disabled' });
+    const parsed = sessionBuilder.postponementSchema.safeParse(await readBody(req));
+    if (!parsed.success) return json(res, 400, { error:'invalid postponement' });
+    const state = readStateStrict(user.id);
+    if (state === UNREADABLE) return json(res, 503, { error:'state unreadable' });
+    try {
+      const p = sessionBuilder.postponePrescription(DATA, user.id, state, parsed.data);
+      json(res, 200, { ...prescriptionFields(user.id), session:sessionBuilder.publicPrescription(p) });
+    } catch (e) { json(res, 409, { error:e.message }); }
+  },
+
+  'POST /api/session-prescriptions/abandon': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error:'not signed in' });
+    if (!sessionBuilder) return json(res, 404, { error:'MCP disabled' });
+    const parsed = sessionBuilder.abandonmentSchema.safeParse(await readBody(req));
+    if (!parsed.success) return json(res, 400, { error:'invalid abandonment' });
+    const state = readStateStrict(user.id);
+    if (state === UNREADABLE) return json(res, 503, { error:'state unreadable' });
+    try {
+      const p = sessionBuilder.abandonPrescription(DATA, user.id, state, parsed.data);
+      json(res, 200, { ...prescriptionFields(user.id), session:sessionBuilder.publicPrescription(p) });
+    } catch (e) { json(res, 409, { error:e.message }); }
+  },
+
   'GET /api/data': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });

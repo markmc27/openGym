@@ -86,3 +86,22 @@ describe('safe active exercise swap', () => {
     expect(active.cur).toBe(cursor)
   })
 })
+
+it('replaces an unlogged prescribed snapshot and traces repeated substitutions to the original slot',()=>{
+  const current={...entry('bench'),exercise:{id:'bench',n:'Bench'},coachingNotes:'Bench cue'}
+  const prescription={id:'p',exercises:[{exercise_id:'bench',position:1}]}
+  const active={cur:0,prescription,entries:[current]}
+  swapActiveExercise(active,0,{...replacement(),exercise:{id:'incline',n:'Incline'}},{reason:'Bench occupied'})
+  expect(active.entries[0].exercise.id).toBe('incline')
+  expect(active.entries[0].coachingNotes).toBeUndefined()
+  expect(active.entries[0].substitution).toEqual({prescribed_exercise_id:'bench',position:1,reason:'Bench occupied'})
+  swapActiveExercise(active,0,{...replacement(),id:'press',exercise:{id:'press',n:'Press'}})
+  expect(active.entries[0].substitution.prescribed_exercise_id).toBe('bench')
+  expect(prescription.exercises[0].exercise_id).toBe('bench')
+})
+it('protects a completed unilateral limb from being relabelled',()=>{
+  const current=entry('bench',{sets:[{done:false,sides:{L:{done:true,w:10,r:8},R:{done:false,w:10,r:8}}}]})
+  const active={cur:0,entries:[current]}
+  expect(swapActiveExercise(active,0,replacement()).needsConfirmation).toBe(true)
+  expect(active.entries[0]).toBe(current)
+})

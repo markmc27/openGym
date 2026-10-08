@@ -1,3 +1,4 @@
+import { abandonmentRequest } from '../lib/session-abandon.js'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
@@ -646,6 +647,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       <Icon name="pin" style={{ fontSize: 13, marginInlineEnd: 5, verticalAlign: '-2px' }} />
       {t('From {0}:', fmtDate(pinnedNote.d, true))} {pinnedNote.note}
     </div>}
+    {entry.loadConvention && <div className="exnote">Load: {entry.loadConvention}{entry.setupContext?.machine ? ` · ${entry.setupContext.machine}` : ''}</div>}
     {entry.coachingNotes && <div className="exnote">{entry.coachingNotes}</div>}
     {S.active?.coachingNotes && <div className="exnote">{S.active.coachingNotes}</div>}
     {entry.sets.map((s, i) => (s.targetRir != null || s.targetRpe != null || s.coachingNotes) ? <div className="exnote" key={i}>{i+1}: {s.targetRir != null ? `RIR ${s.targetRir}` : s.targetRpe != null ? `RPE ${s.targetRpe}` : ''} {s.coachingNotes}</div> : null)}
@@ -891,6 +893,7 @@ const coveredTop = () => {
 function ActiveWorkout() {
   const nav = useNavigate()
   const S = useStore(s => s.S)
+  const sync = useStore(s => s.sync)
   const update = useStore(s => s.update)
   const { startRest: liveRest, stopRest, stopWork, work, timer } = useUI()
   const A = S.active
@@ -1335,7 +1338,19 @@ function ActiveWorkout() {
   // ⌄ that only leaves the screen (v1.3.11).
   const discardWorkout = () => confirmSheet({
     title: t('Discard workout?'), message: t('The sets you logged in this session will be lost.'), confirmText: t('Discard'), danger: true,
-    onConfirm: () => { update(s => { s.active = null }); stopRest(); stopWork(); nav('/home') },
+    onConfirm: async () => {
+      const owner=useStore.getState().user?.id
+      const active = useStore.getState().S.active
+      if (active?.session_id) {
+        try {
+          const fields = await api('/api/session-prescriptions/abandon', {method:'POST',body:JSON.stringify(abandonmentRequest(active,active.deviationReason || active.note || 'Discarded by athlete',useStore.getState().S.unit))})
+          // Do not clear a different workout opened while this request was in flight.
+          if (useStore.getState().user?.id !== owner || useStore.getState().S.active?.id !== active.id) return
+          update(s => { s.sessionPrescriptions=fields.sessionPrescriptions; s.sessionPrescriptionsVersion=fields.sessionPrescriptionsVersion })
+        } catch (e) { useUI.getState().toast('Could not abandon this session. Your workout is still saved on this device. '+e.message); return }
+      }
+      update(s => { s.active = null }); stopRest(); stopWork(); nav('/home')
+    },
   })
   // The header ⋯, in groups: the settings you change at the gym first (their own sheet, the same
   // values as Settings), then what to add, what to change about this workout, and Discard last.
@@ -1736,6 +1751,7 @@ function ActiveWorkout() {
   }, [])
 
   return <div className="narrow">
+    {A.session_id && <p role="status" className="small muted">{sync?.offline ? 'Offline. Workout saved on this device.' : sync?.pending || sync?.lastError ? 'Changes are waiting to sync.' : 'Workout saved on this device.'} ChatGPT receives your actual sets after you finish and sync.</p>}
     {/* In list mode the whole session scrolls under the header, so the header (name, clock,
         set counter, discard/finish, progress) stays pinned — the one thing you want in view
         while you are somewhere in the middle of a long stack. Cards mode never scrolls far. */}

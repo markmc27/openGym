@@ -107,3 +107,60 @@ Completed workouts retain the exact prescription snapshot and revision.
 sets and notes with that snapshot, and reports both actual and current revisions.
 All writes use the existing per-profile `sessions:write` scope; no additional
 account, routine, or generic state mutation tools are exposed.
+
+## Session inbox, context and appraisal reads
+
+In the app, **Plan → Sessions** lists upcoming, expired, started, completed,
+abandoned and cancelled prescriptions. Today's unstarted session offers an optional
+check-in before Start. Completed sessions have a planned-versus-completed comparison;
+the same comparison is available from the history detail sheet.
+
+A started prescription can be abandoned explicitly. The app retains its partial
+results, their unit, check-in and reason in the server-owned prescription record.
+The revision stays closed; a new dated prescription is needed to train again.
+Discard waits for server acknowledgement and preserves the device workout on failure.
+If the starting device is unavailable, the inbox can close the session with an
+explicit note that actual rows are unavailable. Completing later on that device
+still retains actual training history and the abandonment audit record.
+
+Unstarted standalone sessions can be postponed in the inbox. This uses
+`POST /api/session-prescriptions/postpone`, creates a revision and archives the old
+date/sets. Stale revisions, started sessions and occupied dates are refused.
+Abandonment uses `POST /api/session-prescriptions/abandon`; both endpoints use the
+existing app authentication and same-origin protection. No new MCP write scope is
+introduced. Abandoned sessions no longer reserve a date or unfinished-session slot.
+
+Exercise swaps retain the original prescription position and exercise ID while
+recording the actual replacement's own ID/snapshot and reason. A partially completed
+unilateral exercise is treated as logged work and cannot be relabelled. Record a
+replacement reason in its exercise-note sheet; generic reasons for changed or skipped
+work can be saved in the session-note sheet. Entirely skipped exercise notes are
+retained separately from completed progression history.
+
+**Exercises → exercise details → Load convention & setup** (also available in
+the active exercise-note sheet) stores a convention (per dumbbell, total,
+added load, assistance or bodyweight), machine/gym label and familiar aliases.
+Standing setup notes and these conventions are exposed by the read-only
+`get_training_context`, optionally limited to `exercise_ids` (maximum 100).
+`search_exercises` accepts `available_only`; results include selected-profile
+availability, saved conventions, favourites and last use. Unknown conventions and
+app-default increments are identified explicitly. Prescriptions snapshot this
+context; current settings never rewrite the historical prescription.
+
+`list_sessions` accepts optional `from`, `to`, `status`, `limit` (1–50, default 20)
+and `offset`. Its compact results omit revision archives and per-set comparisons;
+`get_session` remains the full detail read. `get_training_summary(from,to)` accepts
+an ordered range of at most 366 days and returns completed work by exercise/muscle,
+effort coverage, dated session comparisons, recorded context and bodyweight change.
+These tools reuse the app's counting rules and are read-only on both transports.
+
+Weekly volume targets include dated prescriptions instead of the recurring target
+on those dates. Completed sessions use their opened prescription revision. Undated
+queue slots remain a weekly budget; a prescription naming a queue base routine
+replaces that slot once. Historical targets use preserved prescriptions only because
+older recurring schedules are not archived. A unilateral pair is one work set; one
+completed limb is half. Warm-ups and cardio are excluded, and missing effort is
+reported as unknown. Readiness is self-reported context, not an inferred measurement.
+
+First-start connectivity is still required. Active sets remain device-local until
+Finish and successful sync; the inbox and workout screen state that boundary.

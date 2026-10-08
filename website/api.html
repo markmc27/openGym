@@ -243,7 +243,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.3.10</span>
-    <span>71 endpoints</span>
+    <span>73 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -1519,6 +1519,222 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">409</span>
     <span class="p-desc">Revision conflict or session cannot be started</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Profile state unreadable</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/session-prescriptions/postpone</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Postpone one unstarted standalone session</span>
+  </summary>
+  <div class="ep-body">
+<p>Keeps the stable ID, creates a new revision and archives the previous prescription. Uses ordinary profile authentication and same-origin protection. Refuses started, cancelled, abandoned or completed sessions, occupied dates and stale revisions.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">session_id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">revision<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;20)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">date<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(date)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Updated session and refreshed prescription records</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Not signed in</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP session support is unavailable</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Revision conflict or incompatible lifecycle state</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Profile state unreadable</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/session-prescriptions/abandon</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Close a started prescription and retain partial results</span>
+  </summary>
+  <div class="ep-body">
+<p>Terminal audit record; never unlocks the opened revision or changes a master routine. Idempotent retries preserve the first abandonment. At most 600 actual rows across all exercises. Requires profile authentication and ordinary same-origin protection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">session_id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">revision<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;20)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">reason<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 2000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">unit</span>
+    <span class="p-type">&quot;kg&quot; | &quot;lb&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">readiness</span>
+    <span class="p-type"><a href="#schema-SessionReadiness">SessionReadiness</a></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].exercise_id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].note</span>
+    <span class="p-type">string <span class="p-hint">(&le; 2000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].substitution</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].substitution.prescribed_exercise_id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].substitution.position<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;100)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].substitution.reason</span>
+    <span class="p-type">string <span class="p-hint">(&le; 2000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].load<em class="p-req" title="required">required</em></span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;2000)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].done<em class="p-req" title="required">required</em></span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].reps</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;10000)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].seconds</span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;86400)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].minutes</span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;1440)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].speed</span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;200)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].side</span>
+    <span class="p-type">&quot;L&quot; | &quot;R&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].phase</span>
+    <span class="p-type">&quot;warmup&quot; | &quot;work&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].rir</span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;10)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">performed[].sets[].rpe</span>
+    <span class="p-type">number <span class="p-hint">(1&ndash;10)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Updated session and refreshed prescription records</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid request</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Not signed in</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP session support is unavailable</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Revision conflict or incompatible lifecycle state</span>
   </div>
   <div class="prow rrow">
     <span class="r-code s5">503</span>
@@ -3231,6 +3447,49 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
        is <b>representative, not enforced</b> — the server stores it opaquely and the app
        grows it over time.</p>
     <div class="eps">
+
+<details class="ep sch" id="schema-SessionReadiness">
+  <summary>
+    <span class="sch-name"><code>SessionReadiness</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">available_minutes</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;1440)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">energy</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;5)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">soreness</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;10)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">discomfort_location</span>
+    <span class="p-type">string <span class="p-hint">(&le; 100 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">discomfort_intensity</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;10)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">context</span>
+    <span class="p-type">string <span class="p-hint">(&le; 1000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
 
 <details class="ep sch" id="schema-Error">
   <summary>

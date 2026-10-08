@@ -59,8 +59,8 @@ export function createPrescription(data, uid, S, input) {
       if (e.position !== i+1 || e.exercise_id !== cfg.id) throw new Error('exercise position/id must match the routine')
       assertPrescriptionCompatible(cfg)
     })
-    if (store.sessions.some(s => !s.cancelled_at && s.date === p.date && !(S.workouts || []).some(w => w.session_id === s.id))) throw new Error('an unfinished prescription already exists for this date')
-    if (store.sessions.filter(s => !s.cancelled_at && s.date >= today && !(S.workouts || []).some(w => w.session_id === s.id)).length >= 20) throw new Error('at most 20 unfinished prescriptions')
+    if (store.sessions.some(s => !s.cancelled_at && !s.abandoned_at && s.date === p.date && !(S.workouts || []).some(w => w.session_id === s.id))) throw new Error('an unfinished prescription already exists for this date')
+    if (store.sessions.filter(s => !s.cancelled_at && !s.abandoned_at && s.date >= today && !(S.workouts || []).some(w => w.session_id === s.id)).length >= 20) throw new Error('at most 20 unfinished prescriptions')
     const { session_id, ...rest } = p
     const saved = { ...rest, id: session_id, created_at: new Date().toISOString(), requestHash: crypto.createHash('sha256').update(request).digest('hex') }
     store.sessions.push(saved); store.version++

@@ -1,3 +1,4 @@
+import { api } from '../lib/api.js'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { parseHTML } from 'linkedom'
@@ -2328,4 +2329,28 @@ describe('the workout screen chrome (v1.3.11)', () => {
     await mount([exercise('plain-bench', [false])], 0, { gifSize: 'mini', active: { workoutView: 'compact' } })
     expect(container.querySelector('.wthumb')).toBeNull()
   })
+})
+
+it('keeps a prescribed workout on the device if abandonment cannot be acknowledged',async()=>{
+  await mount([exercise('bench',[true,false])],0,{active:{session_id:'p',prescription:{id:'p',revision:1}}})
+  vi.mocked(api).mockImplementation(path=>path.includes('/abandon')?Promise.reject(new Error('offline')):Promise.resolve({}))
+  try {
+    await requestDiscard()
+    await act(async()=>{await mocks.confirmSheet.mock.calls.at(-1)[0].onConfirm()})
+    expect(mocks.S.active.session_id).toBe('p')
+    expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining('still saved'))
+  } finally {vi.mocked(api).mockImplementation(()=>Promise.resolve({}))}
+})
+it('retains partial results on the server before clearing an abandoned prescribed workout',async()=>{
+  await mount([exercise('bench',[true,false])],0,{active:{session_id:'p',prescription:{id:'p',revision:1}}})
+  const sessions=[{id:'p',abandoned_at:'now'}]
+  vi.mocked(api).mockImplementation(path=>Promise.resolve(path.includes('/abandon')?{sessionPrescriptions:sessions,sessionPrescriptionsVersion:2}:{}))
+  try {
+    await requestDiscard()
+    await act(async()=>{await mocks.confirmSheet.mock.calls.at(-1)[0].onConfirm()})
+    const call=vi.mocked(api).mock.calls.find(([path])=>path.includes('/abandon'))
+    expect(JSON.parse(call[1].body).performed[0].sets[0].done).toBe(true)
+    expect(mocks.S.active).toBeNull()
+    expect(mocks.S.sessionPrescriptions[0].abandoned_at).toBe('now')
+  } finally {vi.mocked(api).mockImplementation(()=>Promise.resolve({}))}
 })

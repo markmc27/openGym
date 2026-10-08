@@ -63,7 +63,7 @@ const capStamps = m => {
 const OWN_MERGE = new Set([
   '_ts', '_rev', '_wid', '_wids', '_unstamped', '_prior', 'active', 'unit', 'unitSet', 'resetAt', 'resetIds', 'deleted', 'edited', 'undone', 'routineOrder',
   'workouts', 'routines', 'customEx', 'equipProfiles', 'gymCards', 'bodyweight', 'favEx',
-  'exWeights', 'balanceOverrides', 'loadKind', 'plates',
+  'exWeights', 'balanceOverrides', 'loadKind', 'plates', 'exerciseContexts',
 ]);
 const PER_KEY = new Set(['week', 'dayPlan', 'exNotes', 'barWeights']);
 const ENTRY_META = new Set(['id', '_ts', '_f', '_u']);
@@ -110,7 +110,7 @@ export function highestStamp(S) {
       if (isMap(x._f)) for (const v of Object.values(x._f)) see(v);
     }
   }
-  for (const f of ['balanceOverrides', 'loadKind', 'plates']) {
+  for (const f of ['balanceOverrides', 'loadKind', 'plates', 'exerciseContexts']) {
     if (isMap(S[f])) for (const v of Object.values(S[f])) see(isMap(v) ? v._ts : 0);
   }
   return m;

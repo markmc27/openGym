@@ -1,3 +1,5 @@
+import { completedWorkSets } from './session-review.js'
+import { prescriptionRoutineId } from './session-plan.js'
 // Which muscles an exercise trains, and how hard — the data behind every muscle map.
 //
 // The exercise dataset names muscles in free text and is not consistent about it:
@@ -273,7 +275,7 @@ export function loadOf(items) {
  */
 export const loadOfWorkouts = (workouts, pick) =>
   loadOf((workouts || []).flatMap(w =>
-    (w.entries || []).map(e => ({ id: e.id, ex: e.exercise || e, sets: (e.sets || []).filter(s => s.done && !isWarmupRow(s) && (!pick || pick(s))).length }))))
+    (w.entries || []).map(e => ({ id: e.id, ex: e.exercise || e, sets: completedWorkSets(e, pick) }))))
 
 /**
  * Workouts in one existing Muscle balance range, with time injected for deterministic tests.
@@ -320,7 +322,7 @@ export function loadOfWeeklyPlan(S) {
 
 /** Load for a workout still in progress — the sets ticked so far. */
 export const loadOfActive = active =>
-  loadOf((active?.entries || []).map(e => ({ id: e.id, ex: e.exercise || e, sets: (e.sets || []).filter(s => s.done && !isWarmupRow(s)).length })))
+  loadOf((active?.entries || []).map(e => ({ id: e.id, ex: e.exercise || e, sets: completedWorkSets(e) })))
 
 /**
  * Shade buckets 0–4 per muscle.
@@ -363,4 +365,28 @@ export function rankOf(load) {
     .sort((a, b) => load[b] - load[a] || MUSCLES.indexOf(a) - MUSCLES.indexOf(b))
   const missed = MUSCLES.filter(m => !(load[m] > 0))
   return { worked, missed }
+}
+
+/** Dated prescriptions replace the recurring target on their date. Undated queue slots
+ * remain a weekly budget, reduced only when a prescription names that base routine. */
+export function loadOfTrainingWeek(S, start, { includeRecurring=true } = {}) {
+  const load = includeRecurring ? loadOfWeeklyPlan(S) : {}
+  const queued = new Set(queueOf(S)?.ids || [])
+  const replacedQueue = new Set()
+  const add = (values, sign=1) => { for (const [m,n] of Object.entries(values)) load[m]=Math.max(0,(load[m] || 0)+n*sign) }
+  const ex = Object.fromEntries((S.customEx || []).map(e=>[e.id,e]))
+  for (let day=0;day<7;day++) {
+    const d=new Date(start+'T12:00:00');d.setDate(d.getDate()+day)
+    const iso=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    const current=(S.sessionPrescriptions || []).find(p=>p.date===iso && !p.cancelled_at && !p.abandoned_at)
+    if (!current) continue
+    const w=(S.workouts || []).find(w=>w.session_id===current.id)
+    const p=w?.prescription || current
+    const ids=[].concat(S.week?.[d.getDay()] || []).filter(id=>!queued.has(id))
+    const base=p.base_routine_id || (p.kind!=='standalone' ? prescriptionRoutineId(p) : null)
+    if (queued.has(base) && !replacedQueue.has(base)) { ids.push(base);replacedQueue.add(base) }
+    if (includeRecurring) for (const id of ids) add(loadOfRoutine((S.routines || []).find(r=>r.id===id),ex),-1)
+    add(loadOf(p.exercises.filter(e=>e.mode!=='cardio').map(e=>({id:e.exercise_id,ex:e.exercise || ex[e.exercise_id],sets:e.sets.filter(s=>s.phase!=='warmup').length}))))
+  }
+  return load
 }

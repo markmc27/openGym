@@ -20,6 +20,6 @@ export function sessionRoutine(p) {
 
 export function routinesWithSessions(S) {
   return [...(S.routines || []), ...(S.sessionPrescriptions || [])
-    .filter(p => p.kind === 'standalone' && !p.cancelled_at)
+    .filter(p => p.kind === 'standalone' && !p.cancelled_at && !p.abandoned_at)
     .map(sessionRoutine)]
 }

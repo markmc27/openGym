@@ -1,7 +1,8 @@
 import { supersetUnits, unitOf } from './history.js'
+import { hasCompletedWork } from './workout-model.js'
 
 function hasLoggedSet(entry) {
-  return Array.isArray(entry?.sets) && entry.sets.some(set => set?.done === true)
+  return Array.isArray(entry?.sets) && entry.sets.some(hasCompletedWork)
 }
 
 /**
@@ -13,16 +14,21 @@ function hasLoggedSet(entry) {
  */
 export function swapActiveExercise(active, index, replacement, {
   loggedConfirmed = false,
-  groupDisposition
+  groupDisposition, reason = ''
 } = {}) {
   if (!active || !Array.isArray(active.entries) || !replacement || index < 0 || index >= active.entries.length) return null
 
   const current = active.entries[index]
+  const prescribed = active.prescription?.exercises?.find(e => e.exercise_id === current.id)
+  const substitution = current.substitution || (prescribed ? {
+    prescribed_exercise_id: prescribed.exercise_id, position: prescribed.position,
+  } : null)
+  const trace = substitution ? { substitution: { ...substitution, reason: reason.trim().slice(0, 2000) || substitution.reason || '' } } : {}
   if (!hasLoggedSet(current)) {
     const metadata = Object.fromEntries(Object.entries(current).filter(([key]) => (
-      !['id', 'target', 'plan', 'planned', 'carried', 'sets', 'sg'].includes(key)
+      !['id', 'target', 'plan', 'planned', 'carried', 'sets', 'sg', 'exercise', 'coachingNotes', 'substitution', 'loadConvention', 'setupContext'].includes(key)
     )))
-    active.entries[index] = { ...metadata, ...replacement, ...(current.sg ? { sg: current.sg } : {}) }
+    active.entries[index] = { ...metadata, ...replacement, ...trace, ...(current.sg ? { sg: current.sg } : {}) }
     active.cur = index
     return { inserted: false, index }
   }
@@ -36,7 +42,7 @@ export function swapActiveExercise(active, index, replacement, {
   const keepGroup = current.sg && groupDisposition === 'keep'
   const insertAt = keepGroup ? index + 1 : (unit.length > 1 ? unit.at(-1) + 1 : index + 1)
   active.entries.splice(insertAt, 0, {
-    ...replacement,
+    ...replacement, ...trace,
     // A swap does not change which routine the slot belongs to — carry its `rid` the same
     // way `sg` is carried, so a combined session's WorkoutDetail groups stay contiguous.
     ...(current.rid ? { rid: current.rid } : {}),

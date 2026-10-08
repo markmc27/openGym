@@ -2,7 +2,7 @@ import { beforeEach, afterEach, it, expect } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createStandalonePrescription, replacePrescription, startPrescription, publicPrescription } from '../src/session-builder.js'
+import { createStandalonePrescription, replacePrescription, startPrescription, publicPrescription, abandonPrescription, postponePrescription } from '../src/session-builder.js'
 import { readPrescriptions, cancelPrescription } from '../src/prescriptions.js'
 import { invoke, tools } from '../src/service.js'
 import { withProfile } from '../src/state.js'
@@ -106,4 +106,46 @@ it('search is read-only and never leaks or registers another profile’s custom 
   const b=await withProfile({data,user:{id:'b',name:'B'},readState:()=>({...S,customEx:[]})},()=>invoke(search,{query:'Fixture hold'}))
   expect(b.exercises.some(e=>e.id==='fixture-hold')).toBe(false)
   expect(S.routines).toEqual([])
+})
+
+it('abandons opened sessions with retained partial results, keeps revision frozen and releases date capacity',()=>{
+  const p=createStandalonePrescription(data,'a',S,input())
+  const request={session_id:p.id,revision:1,reason:'Ran out of time',performed:[{exercise_id:'0743',sets:[{load:45,reps:6,done:true}]}]}
+  expect(()=>abandonPrescription(data,'a',S,request)).toThrow(/started/)
+  startPrescription(data,'a',S,p.id,1)
+  expect(()=>abandonPrescription(data,'a',S,{...request,revision:2})).toThrow(/revision/)
+  const abandoned=abandonPrescription(data,'a',S,request)
+  expect(abandoned.abandonment.performed[0].sets[0].reps).toBe(6)
+  const version=readPrescriptions(data,'a').version
+  expect(abandonPrescription(data,'a',S,request)).toEqual(abandoned)
+  expect(readPrescriptions(data,'a').version).toBe(version)
+  expect(()=>startPrescription(data,'a',S,p.id,1)).toThrow(/cancelled or completed/)
+  expect(()=>postponePrescription(data,'a',S,{session_id:p.id,revision:1,date:p.date})).toThrow(/unstarted/)
+  expect(createStandalonePrescription(data,'a',S,{...input(),session_id:'new-session'}).id).toBe('new-session')
+  expect(()=>abandonPrescription(data,'a',{...S,workouts:[{session_id:p.id}]},request)).toThrow(/completed/)
+})
+it('postpones an unopened session with an archived revision and rejects stale changes',()=>{
+  const p=createStandalonePrescription(data,'a',S,input()),d=new Date(p.date+'T12:00:00');d.setDate(d.getDate()+1)
+  const date=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  const changed=postponePrescription(data,'a',S,{session_id:p.id,revision:1,date})
+  expect(changed.id).toBe(p.id);expect(changed.date).toBe(date);expect(changed.revisions[0].date).toBe(p.date)
+  expect(changed.revision).toBe(2)
+  expect(()=>postponePrescription(data,'a',S,{session_id:p.id,revision:1,date:p.date})).toThrow(/revision/)
+})
+it('reads profile-specific equipment, aliases, paginated summaries and missing effort through the shared service',async()=>{
+  const p=createStandalonePrescription(data,'a',S,input())
+  const st={...state(),activeEquipId:'home',equipFilterOn:true,equipProfiles:[{id:'home',name:'Home',equipment:['dumbbell']}],exerciseContexts:{'0743':{aliases:['My hack'],load_convention:'added_load'}},exNotes:{'0743':'Seat 2'},workouts:[{id:p.id,session_id:p.id,d:p.date,prescription:p,entries:[{id:'0743',sets:[{w:50,r:7,done:true}]}],readiness:{energy:3}}]}
+  await withProfile({user:{id:'a',name:'Test'},readState:()=>st},async()=>{
+    const call=(name,args={})=>invoke(tools.find(t=>t.name===name),args)
+    expect((await call('get_training_context',{exercise_ids:['0743']})).exercises[0].load_convention).toBe('added_load')
+    expect((await call('search_exercises',{query:'My hack'})).exercises[0].id).toBe('0743')
+    expect((await call('search_exercises',{query:'My hack',available_only:true})).exercises.some(e=>e.id==='0743')).toBe(false)
+    const list=await call('list_sessions',{status:'completed',limit:1})
+    expect(list.total).toBe(1);expect(list.sessions[0].exercises).toBeUndefined();expect(list.sessions[0].readiness.energy).toBe(3)
+    expect((await call('list_sessions',{status:'planned'})).sessions).toHaveLength(0)
+    const summary=await call('get_training_summary',{from:p.date,to:p.date})
+    expect(summary.unrated_work_sets).toBe(1);expect(summary.rated_work_sets).toBe(0)
+    expect(summary.work_sets_by_exercise['0743']).toBe(1)
+    await expect(call('get_training_summary',{from:'2020-01-01',to:p.date})).rejects.toThrow(/366/)
+  })
 })

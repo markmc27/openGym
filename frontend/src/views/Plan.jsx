@@ -1,3 +1,4 @@
+import SessionInbox from '../components/SessionInbox.jsx'
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
@@ -32,7 +33,7 @@ import {
 // lives in this browser's storage and not in S.
 export const PLAN_VIEW_KEY = 'gym_plan_view'
 const readView = () => {
-  try { return localStorage.getItem(PLAN_VIEW_KEY) === 'routines' ? 'routines' : 'schedule' } catch { return 'schedule' }
+  try { return ['routines','sessions'].includes(localStorage.getItem(PLAN_VIEW_KEY)) ? localStorage.getItem(PLAN_VIEW_KEY) : 'schedule' } catch { return 'schedule' }
 }
 
 /* Undo for Plan's two removals (v1.3.11). Both go through the store's normal update, so sync
@@ -167,8 +168,8 @@ export default function Plan() {
     </div>
     <input ref={fileRef} type="file" accept="application/json,.json" onChange={pickFile} hidden />
     <Segmented className="plan-views" value={view} onChange={setView}
-      options={[{ value: 'schedule', label: t('Schedule') }, { value: 'routines', label: t('Routines') }]} />
-    {view === 'routines'
+      options={[{ value: 'schedule', label: t('Schedule') }, { value: 'routines', label: t('Routines') }, {value:'sessions',label:'Sessions'}]} />
+    {view === 'sessions' ? <SessionInbox /> : view === 'routines'
       ? <Routines S={S} update={update} nav={nav} />
       : <Schedule S={S} update={update} nav={nav} mode={mode} />}
   </div>

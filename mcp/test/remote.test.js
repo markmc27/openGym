@@ -122,6 +122,11 @@ describe('prescription lifecycle',()=>{
     const {tokens}=await grant()
     const list=await mcp(tokens.access_token,'tools/list',{})
     expect(list.result.tools.find(t=>t.name==='search_exercises').annotations.readOnlyHint).toBe(true)
+    for (const name of ['get_training_context','get_training_summary']) {
+      expect(list.result.tools.find(t=>t.name===name).annotations.readOnlyHint).toBe(true)
+      const result=await mcp(tokens.access_token,'tools/call',{name,arguments:name==='get_training_context'?{}:{from:date(),to:date()}})
+      expect(result.result.isError).not.toBe(true)
+    }
     expect(list.result.tools.find(t=>t.name==='create_session_prescription').annotations.readOnlyHint).toBe(false)
     const search=await mcp(tokens.access_token,'tools/call',{name:'search_exercises',arguments:{query:'hack squat'}})
     expect(search.result.structuredContent.exercises.some(e=>e.id==='0743')).toBe(true)

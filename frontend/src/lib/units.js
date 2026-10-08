@@ -85,7 +85,7 @@ export function convertStateUnit(S, to) {
   // sets, so they must move with the sets or show kg totals under an lb label (QA C11). The
   // volume is re-added from the converted sets, so it agrees with the set list to the number.
   const convSession = s => {
-    const out = { ...s, entries: (s.entries || []).map(e => convEntry(e, from, to)) }
+    const out = { ...s, entries: (s.entries || []).map(e => convEntry(e, from, to)), ...(Array.isArray(s.skippedExercises) ? {skippedExercises:s.skippedExercises.map(e=>convEntry(e,from,to))} : {}) }
     if (out.bw != null) out.bw = bw(out.bw)
     if (Number.isFinite(out.vol)) out.vol = workoutVolume({ entries: out.entries.filter(e => Array.isArray(e?.sets)) })
     return out

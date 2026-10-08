@@ -1,3 +1,5 @@
+import { equipmentContext, exerciseContext, exerciseAvailable } from '../../frontend/src/lib/training-context.js'
+import { compactSession, completedWorkSets, effortCounts } from '../../frontend/src/lib/session-review.js'
 /* The eight read-only tools. Each handler returns JSON; labels.js pre-substitutes any
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
@@ -686,13 +688,13 @@ export const SESSION_TOOLS = [
   { name:'get_profile', description:'Identify the connected profile and its load unit. Remote tools can access only this profile; use this to distinguish a test profile from your real training account.', schema:{},
     handler:() => ({...getUser(), unit:getState()?.unit || 'kg'}) },
   { name:'search_exercises', description:'Search the exercise catalogue and this profile\'s custom exercises. Returns reliable exercise IDs, names, equipment and muscles for composing a session. Search does not create or edit exercises.',
-    schema:{query:z.string().trim().min(1).max(120),equipment:z.string().min(1).max(80).optional(),body_part:z.string().min(1).max(80).optional(),limit:z.number().int().min(1).max(50).default(20)},
-    handler:({query,equipment,body_part,limit=20}) => {
+    schema:{available_only:z.boolean().default(false),query:z.string().trim().min(1).max(120),equipment:z.string().min(1).max(80).optional(),body_part:z.string().min(1).max(80).optional(),limit:z.number().int().min(1).max(50).default(20)},
+    handler:({query,equipment,body_part,limit=20,available_only=false}) => {
       const S=getState() || {}, seen=new Set()
       const matches=[...(S.customEx || []),...CATALOGUE].filter(ex => !seen.has(ex.id) && seen.add(ex.id))
-        .filter(ex => (!equipment || (ex.eq || '').toLowerCase()===equipment.toLowerCase()) && (!body_part || (ex.bp || '').toLowerCase()===body_part.toLowerCase()))
-        .map(ex => ({ex,score:searchScore(ex,query)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.ex.id.localeCompare(b.ex.id))
-      return {unit:S.unit || 'kg',total:matches.length,exercises:matches.slice(0,limit).map(({ex})=>({id:ex.id,name:ex.n,equipment:ex.eq || null,body_part:ex.bp || null,target:ex.tg || null,secondary_muscles:ex.sm || [],custom:(S.customEx || []).some(c=>c.id===ex.id),supported_modes:ex.bp==='cardio' ? [] : ['reps','time']}))}
+        .filter(ex => (!available_only || exerciseAvailable(S,ex)) && (!equipment || (ex.eq || '').toLowerCase()===equipment.toLowerCase()) && (!body_part || (ex.bp || '').toLowerCase()===body_part.toLowerCase()))
+        .map(ex => ({ex,score:Math.max(searchScore(ex,query),(S.exerciseContexts?.[ex.id]?.aliases || []).some(a=>a.toLowerCase().includes(query.toLowerCase()))?100000:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.ex.id.localeCompare(b.ex.id))
+      return {unit:S.unit || 'kg',total:matches.length,exercises:matches.slice(0,limit).map(({ex})=>({...exerciseContext(S,ex),id:ex.id,name:ex.n,equipment:ex.eq || null,body_part:ex.bp || null,target:ex.tg || null,secondary_muscles:ex.sm || [],custom:(S.customEx || []).some(c=>c.id===ex.id),supported_modes:ex.bp==='cardio' ? [] : ['reps','time']}))}
     } },
   { name:'create_session_prescription', description:'Create one dated standalone workout without creating or changing a master routine. Use search_exercises for IDs. Provide every exercise and set explicitly: reps or timed seconds, load in profile units, optional warm-up phase, per-side rep sets, adjacent superset groups, rest and coaching notes. An optional base_routine_id records provenance only. Stable IDs make identical retries safe; never substitute a smaller test workout for the requested session.',
     schema:standaloneSchema.shape,write:true,handler:input=>publicPrescription(createSession(input)) },
@@ -702,8 +704,40 @@ export const SESSION_TOOLS = [
     handler: ({ session_id }) => publicPrescription(cancelSession(session_id)) },
   { name: 'set_next_session', description: 'Write one immutable, dated session prescription for an existing routine. Never changes the master routine. V1 supports straight bilateral rep sets only. Supply all exercises in routine order and a stable session_id; identical retries are safe. Load is in the profile unit. RIR/RPE are targets, not completed effort.', schema: prescriptionSchema.shape, write: true,
     handler: input => { const { requestHash, ...saved } = setNextSession(input); return saved } },
-  { name: 'list_sessions', description: 'List dated prescribed sessions with stable IDs and their completion status.', schema: {},
-    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(p => ({ ...publicPrescription(p), revision:p.revision || 1, status: prescriptionStatus(p, (S.workouts || []).find(w => w.session_id === p.id)) })) } } },
+  { name:'get_training_context', description:'Read the selected equipment setup, saved load conventions, machine names, setup notes, aliases, favourites and last use. Unspecified conventions and app-default increments are explicit; never infer that two machines share a load history.',
+    schema:{exercise_ids:z.array(z.string().min(1).max(128)).max(100).optional()},
+    handler:({exercise_ids})=>{
+      const S=getState() || {},configs=(S.routines || []).flatMap(r=>r.ex || [])
+      const allIds=[...new Set(exercise_ids || [...(S.favEx || []),...Object.keys(S.exNotes || {}),...Object.keys(S.exerciseContexts || {}),...configs.map(c=>c.id)])],ids=allIds.slice(0,100)
+      return {unit:S.unit || 'kg',context_count:allIds.length,truncated:allIds.length>ids.length,...equipmentContext(S),exercises:ids.map(id=>{
+        const ex=customOf(id,S) || CATALOGUE.find(e=>e.id===id)
+        if (!ex) return {exercise_id:id,missing:true}
+        return exerciseContext(S,ex,configs.find(c=>c.id===id) || {})
+      })}
+    } },
+  { name:'list_sessions', description:'Read a paginated session inbox. Compact results omit raw rows and revision archives; use get_session for full comparison. Status reflects synced completion, not work still only on a phone.',
+    schema:{from:isoDate().optional(),to:isoDate().optional(),status:z.enum(['planned','in_progress','expired','completed','cancelled','abandoned']).optional(),limit:z.number().int().min(1).max(50).default(20),offset:z.number().int().min(0).max(100000).default(0)},
+    handler:({from,to,status,limit=20,offset=0})=>{
+      if (from && to && from>to) throw new Error('from must precede to')
+      const S=getState() || {},records=(S.sessionPrescriptions || []).filter(p=>(!from || p.date>=from) && (!to || p.date<=to))
+        .map(p=>({p,w:(S.workouts || []).find(w=>w.session_id===p.id)}))
+        .filter(({p,w})=>!status || prescriptionStatus(p,w)===status).sort((a,b)=>b.p.date.localeCompare(a.p.date) || a.p.id.localeCompare(b.p.id))
+      return {total:records.length,next_offset:offset+limit<records.length?offset+limit:null,sessions:records.slice(offset,offset+limit).map(({p,w})=>{const {exercises,...summary}=compactSession(p,w,S.unit || 'kg');return summary})}
+    } },
+  { name:'get_training_summary', description:'Read a compact appraisal for a bounded date range: prescribed vs completed sessions, work sets by actual exercise and muscle, measured effort coverage, recorded readiness/deviation notes and bodyweight change. One unilateral pair is one set, one completed side half; warm-ups/cardio excluded. Missing effort is unknown. Does not decide progression.',
+    schema:{from:isoDate(),to:isoDate()},
+    handler:({from,to})=>{
+      if (from>to || (new Date(to)-new Date(from))/86400000>366) throw new Error('use an ordered range of at most 366 days')
+      const S=getState() || {},ws=(S.workouts || []).filter(w=>w.d>=from && w.d<=to)
+      const byExercise=Object.create(null)
+      for (const w of ws) for (const e of w.entries || []) byExercise[e.id]=(byExercise[e.id] || 0)+completedWorkSets(e)
+      const bw=(S.bodyweight || []).filter(b=>b.d>=from && b.d<=to).sort((a,b)=>a.d.localeCompare(b.d))
+      return {from,to,unit:S.unit || 'kg',completed_workouts:ws.length,work_sets_by_exercise:byExercise,work_sets_by_muscle:loadOfWorkouts(ws),...effortCounts(ws),
+        sessions:(S.sessionPrescriptions || []).filter(p=>p.date>=from && p.date<=to).map(p=>compactSession(p,ws.find(w=>w.session_id===p.id),S.unit || 'kg')),
+        unprescribed_sessions:ws.filter(w=>!w.session_id).map(w=>({id:w.id,date:w.d,name:w.name,readiness:w.readiness || null,note:w.note || null,deviation_reason:w.deviationReason || null})),
+        bodyweight:bw.length?{first:bw[0],last:bw.at(-1),change:bw.at(-1).w-bw[0].w}:null,
+        counting_convention:'One work set per bilateral set or unilateral pair; a completed side counts 0.5. Warm-ups and cardio excluded. Missing RIR/RPE is unknown.'}
+    } },
   { name: 'get_session', description: 'Read one prescribed session and the actual completed workout, including skipped exercises, changed rows, RIR/RPE and notes. Completed data appears after the athlete finishes and syncs.', schema: { session_id: z.string().min(1).max(128) },
     handler: ({ session_id }) => { const S = getState(); const p = S?.sessionPrescriptions?.find(p => p.id === session_id); if (!p) throw new Error('session not found'); return sessionComparison(publicPrescription(p), (S.workouts || []).find(w => w.session_id === session_id), S.unit || 'kg') } },
   { name: 'get_exercise_history', description: 'Read recent completed workouts for one exercise with raw set rows, effort ratings and notes.', schema: { exercise_id: z.string().min(1).max(128), limit: z.number().int().min(1).max(100).default(20) },

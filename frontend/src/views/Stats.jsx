@@ -1,3 +1,4 @@
+import { effortCounts, completedWorkSets } from '../lib/session-review.js'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
@@ -11,7 +12,7 @@ import LineChart from '../components/LineChart.jsx'
 import Heatmap from '../components/Heatmap.jsx'
 import Icon from '../components/Icon.jsx'
 import BodyMap, { BodyMapLegend } from '../components/BodyMap.jsx'
-import { loadOfWeeklyPlan, loadOfWorkouts, muscleBalanceWindow, rankOf, MUSCLES, MUSCLE_NAME, musclesOf } from '../lib/muscles.js'
+import { loadOfTrainingWeek, loadOfWeeklyPlan, loadOfWorkouts, muscleBalanceWindow, rankOf, MUSCLES, MUSCLE_NAME, musclesOf } from '../lib/muscles.js'
 import { fatigueOf, strengthOf, STRENGTH_FLOOR, LB_TO_KG } from '../lib/recovery.js'
 import { strengthExerciseRowsForMuscle } from '../lib/strength-exercises.js'
 import { fatigueStateOf } from '../lib/recovery-view.js'
@@ -140,10 +141,10 @@ function MuscleBalance({ S }) {
   // into "where did the stimulus go" — a muscle can lead on sets and still never be trained
   // hard. Offered only when the window holds ratings at all, since with none the hard map
   // would just be empty and read as "you trained nothing".
-  const rated = inWin.some(w => w.entries.some(e => e.sets.some(s => s.done && isHardSet(s))))
+  const rated = inWin.some(w => w.entries.some(e => completedWorkSets(e, isHardSet)>0))
   const on = !weekly && hard && rated
   const load = loadOfWorkouts(inWin, on ? isHardSet : null)
-  const planned = weekly && weekOffset === 0 ? loadOfWeeklyPlan(S) : {}
+  const planned = weekly && (weekOffset === 0 || (S.sessionPrescriptions || []).some(p => weekKey(p.date, ws) === selectedWeek)) ? loadOfTrainingWeek(S, selectedWeek, {includeRecurring:weekOffset===0}) : {}
   const comparisonMuscles = MUSCLES
     .filter(muscle => (planned[muscle] || 0) > 0 || (load[muscle] || 0) > 0)
     .sort((a, b) => (load[b] || 0) - (load[a] || 0) || (planned[b] || 0) - (planned[a] || 0) || MUSCLES.indexOf(a) - MUSCLES.indexOf(b))
@@ -216,6 +217,7 @@ function MuscleBalance({ S }) {
       <Segmented className="seg-range" value={win} onChange={v => { setWin(v); setSel(null); setWeeklyExpanded(false) }}
         options={[{ value: 7, label: t('Week') }, { value: 30, label: '30d' }, { value: 90, label: '90d' }, { value: 0, label: t('All') }]} />
       {weekly ? <div data-weekly-volume-comparison data-week={selectedWeek}>
+        {!!S.sessionPrescriptions?.length && <p className="small muted">Targets include dated prescriptions. A completed unilateral side counts as half a set; warm-ups and cardio are excluded. {effortCounts(inWin).unrated_work_sets} work sets have no effort rating.{weekOffset!==0 ? ' Historical targets include preserved prescriptions only.' : ''}</p>}
         <div className="row between" style={{ margin: '10px 0 6px' }}>
           <button className="iconbtn sm" aria-label={t('Previous week')} onClick={() => { setWeekOffset(offset => offset - 1); setSel(null); setWeeklyExpanded(false) }}><Icon name="chevronLeft" /></button>
           <span className="small" style={{ fontWeight: 600 }}>{t('Week of {0}', fmtDate(selectedWeek))}</span>

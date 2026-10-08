@@ -1,3 +1,5 @@
+import { exerciseContext } from './training-context.js'
+import { exOr } from './exercises.js'
 // How a session's exercise entries are built from a routine. Shared by the live start and by
 // "log a past workout", which is the same screen pointed at another day — both must walk up
 // to identical entries, or the two paths drift apart the first time a prescription rule changes.
@@ -47,7 +49,8 @@ export function buildPlannedEntry(st, cfg, routine, { noProg = false } = {}) {
     && rows.some(s => !isWarmupRow(s) && s.r !== cfg.reps)
   // `planned` is what the routine asked for, kept apart from the target the prescription moved,
   // so the next session can tell an edited plan from a progressed one (nextPrescription).
-  return { target, plan, sets, planned: plannedOf(cfg), ...(carried ? { carried: true } : {}) }
+  const context = exerciseContext(st, (st.customEx || []).find(e=>e.id===cfg.id) || exOr(cfg.id), cfg)
+  return { target, plan, sets, ...(context.load_convention !== 'unspecified' || context.machine || context.setup_notes ? { loadConvention:context.load_convention_label, setupContext:context } : {}), planned: plannedOf(cfg), ...(carried ? { carried: true } : {}) }
 }
 
 /**

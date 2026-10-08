@@ -84,6 +84,9 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
       // The superset the exercise was done in, so the history can show the pairing. Without it
       // the workout forgot at finish what it had been all session.
       ...(entry.sg ? { sg: entry.sg } : {}),
+      ...(entry.substitution ? { substitution: structuredClone(entry.substitution) } : {}),
+      ...(entry.loadConvention ? { loadConvention: entry.loadConvention } : {}),
+      ...(entry.setupContext ? { setupContext: structuredClone(entry.setupContext) } : {}),
       ...(entry.exercise ? { exercise: structuredClone(entry.exercise) } : {}),
       ...(entry.coachingNotes ? { coachingNotes: entry.coachingNotes } : {}),
     }
@@ -124,7 +127,10 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     name: active.name,
     bw: active.bw,
     entries,
+    ...(active.session_id ? {skippedExercises:(active.entries || []).filter(e=>!(e.sets || []).some(hasCompletedWork)).map(e=>({id:e.id,rid:e.rid,sets:(e.sets || []).map(finishedRow),note:e.note || null,exercise:e.exercise,substitution:e.substitution}))} : {}),
     prs,
+    ...(active.readiness ? { readiness: structuredClone(active.readiness) } : {}),
+    ...(active.deviationReason ? { deviationReason: active.deviationReason } : {}),
     ...(active.session_id ? { session_id: active.session_id, prescription: active.prescription } : {}),
     ...(allNoProg ? { excludeFromProgression: true } : {}),
     ...(sessionNote ? { note: sessionNote } : {}),
