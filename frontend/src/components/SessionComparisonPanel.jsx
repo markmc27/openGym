@@ -12,6 +12,7 @@ export default function SessionComparisonPanel({prescription:p,workout:w,unit='k
     <h3>{planned.title || w?.name || 'Prescribed session'}</h3>
     <p className="small muted">{planned.date} · {c.status.replaceAll('_',' ')} · revision {c.revision}</p>
     <p className="small">{planned.notes}</p>
+    {w && <p className="small muted">Prescribed loads: {planned.unit}. Actual loads: {unit}.</p>}
     {w && <p>{summary.completed_work_sets} work sets completed / {summary.prescribed_work_sets} prescribed. {summary.rated_work_sets} rated; {summary.unrated_work_sets} without effort ratings.</p>}
     {summary.readiness && <div className="card"><strong>Check-in</strong>{Object.entries(summary.readiness).map(([k,v])=><div key={k}>{k.replaceAll('_',' ')}: {v}</div>)}</div>}
     {(w?.deviationReason || w?.note) && <p>{w.deviationReason}{w.note ? ` · ${w.note}` : ''}</p>}
