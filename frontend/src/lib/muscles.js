@@ -378,15 +378,20 @@ export function loadOfTrainingWeek(S, start, { includeRecurring=true } = {}) {
   for (let day=0;day<7;day++) {
     const d=new Date(start+'T12:00:00');d.setDate(d.getDate()+day)
     const iso=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-    const current=(S.sessionPrescriptions || []).find(p=>p.date===iso && !p.cancelled_at && !p.abandoned_at)
-    if (!current) continue
-    const w=(S.workouts || []).find(w=>w.session_id===current.id)
-    const p=w?.prescription || current
+    const prescriptions=(S.sessionPrescriptions || []).filter(p=>p.date===iso)
+      .map(current=>({current,w:(S.workouts || []).find(w=>w.session_id===current.id)}))
+      .filter(({current,w})=>w || (!current.cancelled_at && !current.abandoned_at))
+      .map(({current,w})=>w?.prescription || current)
+    if (!prescriptions.length) continue
+    // Multiple completed prescriptions can share a date even though only one unfinished
+    // prescription can reserve it. Replace that day's recurring target once, then count all.
     const ids=[].concat(S.week?.[d.getDay()] || []).filter(id=>!queued.has(id))
-    const base=p.base_routine_id || (p.kind!=='standalone' ? prescriptionRoutineId(p) : null)
-    if (queued.has(base) && !replacedQueue.has(base)) { ids.push(base);replacedQueue.add(base) }
+    for (const p of prescriptions) {
+      const base=p.base_routine_id || (p.kind!=='standalone' ? prescriptionRoutineId(p) : null)
+      if (queued.has(base) && !replacedQueue.has(base)) { ids.push(base);replacedQueue.add(base) }
+    }
     if (includeRecurring) for (const id of ids) add(loadOfRoutine((S.routines || []).find(r=>r.id===id),ex),-1)
-    add(loadOf(p.exercises.filter(e=>e.mode!=='cardio').map(e=>({id:e.exercise_id,ex:e.exercise || ex[e.exercise_id],sets:e.sets.filter(s=>s.phase!=='warmup').length}))))
+    for (const p of prescriptions) add(loadOf(p.exercises.filter(e=>e.mode!=='cardio').map(e=>({id:e.exercise_id,ex:e.exercise || ex[e.exercise_id],sets:e.sets.filter(s=>s.phase!=='warmup').length}))))
   }
   return load
 }

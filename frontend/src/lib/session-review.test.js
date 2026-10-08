@@ -56,3 +56,10 @@ it('retains a reason for an entirely skipped exercise without adding it to compl
   expect(c.exercises[0].skipped_exercise).toBe(true)
   expect(c.exercises[0].note).toBe('Bench unavailable')
 })
+
+it('counts every completed prescription on one date and replaces the recurring target only once',()=>{
+  const second={...p,id:'second',exercises:[{...p.exercises[0],sets:p.exercises[0].sets.slice(0,2)}]}
+  const S={routines:[{id:'r',ex:[{id:'0289',sets:5}]}],week:{4:'r'},sessionPrescriptions:[p,second],workouts:[{session_id:p.id,prescription:p},{session_id:second.id,prescription:second}]}
+  expect(loadOfTrainingWeek(S,'2026-10-05').chest).toBe(5)
+  expect(loadOfTrainingWeek(S,'2026-10-05',{includeRecurring:false}).chest).toBe(5)
+})

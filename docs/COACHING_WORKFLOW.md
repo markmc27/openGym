@@ -46,6 +46,9 @@ raw row counts. Substituted exercises contribute to the muscles actually trained
 no numerical strength comparison is made between different lifts. Missing effort
 is not classified as an easy or hard set.
 
+Every completed prescription on a date counts once; that day's recurring target is
+replaced once even when several completed sessions share the date.
+
 For the current week, undated queue routines remain a weekly budget. A prescription
 that names a queue base routine replaces that slot once. Historical target charts
 use preserved dated prescriptions because earlier recurring schedules are not
@@ -54,7 +57,7 @@ readiness. The tools report observations and do not automatically progress routi
 
 ## Validation
 
-- Frontend: 4,325 passing tests.
+- Frontend: 4,326 passing tests.
 - API: 561 passing tests; final lifecycle integration rechecked after the schema additions.
 - MCP: 112 passing tests, including discovery and new reads over authenticated HTTP.
 - Production frontend build, plain-Node MCP import graph and generated API reference checks passed.
