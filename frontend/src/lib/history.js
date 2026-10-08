@@ -1,5 +1,5 @@
 // Pure helpers over the state object S (ported 1:1 from the vanilla app).
-import { todayISO, isoOf, weekKey, weekStartOf, fmtNum } from './format.js'
+import { todayISO, isoOf, weekKey, weekStartOf, fmtNum, uid } from './format.js'
 import { fmtSpeed } from './speed.js'
 import { isCardio, isBodyweightEq, isAssisted, betterWeight } from './exercises.js'
 import { phaseForSet, modeForSet, modeForEntry, isWarmupRow, isDropSet, isRestPauseSet, normalizeMode, completedVolumeOf, hasCompletedWork, nextDropWeight, splitBurstReps, makeSideSet, isSideSet, syncSideAggregate, WEIGHT_ORIGIN_MANUAL, dropsOf, clustersOf } from './workout-model.js'
@@ -428,7 +428,7 @@ export function bestWeightFor(S, exId) {
  * other days. Once the session is done the pin is fulfilled and the day reads as if unpinned.
  */
 export function effectiveRoutineIds(S, iso, today = todayISO()) {
-  const prescribed = (S.sessionPrescriptions || []).find(p => p.date === iso && !(S.workouts || []).some(w => w.session_id === p.id))
+  const prescribed = (S.sessionPrescriptions || []).find(p => !p.cancelled_at && p.date === iso && !(S.workouts || []).some(w => w.session_id === p.id))
   if (prescribed && S.routines.some(r => r.id === prescribed.routine_id)) return [prescribed.routine_id]
   const ov = S.dayPlan[iso]
   if (ov === 'rest') return []
@@ -982,6 +982,11 @@ const NOT_COPIED = ['done', 'at', 'planSec', 'weightOrigin', 'type', 'drops', 'c
 const bare = src => {
   const out = { ...src }
   for (const k of NOT_COPIED) delete out[k]
+  if (src.prescriptionSet != null || src.actualSetId) {
+    delete out.prescriptionSet
+    out.actualSetId = uid()
+    out.copiedFromPrescriptionSet = src.prescriptionSet ?? src.copiedFromPrescriptionSet
+  }
   return out
 }
 function copyOfRow(src) {

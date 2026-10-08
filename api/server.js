@@ -2405,6 +2405,9 @@ const routes = {
     if (u.id === admin.id) return json(res, 400, { error: 'you cannot delete your own account' });
     if (isAdmin(u) && db.users.filter(isAdmin).length <= 1) return json(res, 400, { error: 'cannot delete the last admin' });
     const name = u.name;
+    // Remove the per-session records and revoke grants before acknowledging deletion.
+    prescriptionStore?.removeProfile(DATA, u.id);
+    remoteMcp?.removeProfile(u.id);
     db.users = db.users.filter(x => x.id !== u.id);
     db.creds = (db.creds || []).filter(c => c.userId !== u.id);
     db.subs = (db.subs || []).filter(x => x.userId !== u.id);

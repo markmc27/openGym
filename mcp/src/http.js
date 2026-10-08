@@ -54,5 +54,6 @@ export function createHttpHandler({ origin, data, readSession, userById, readSta
     }
   })
   app.all('/mcp', (req, res) => res.status(405).set('Allow', 'POST').send('Use POST'))
+  app.removeProfile = uid => provider.removeProfile(uid)
   return app
 }

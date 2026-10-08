@@ -101,6 +101,8 @@ jobs:
       # install as test:api in .gitlab-ci.yml; the Agent SDK is optional and stays out).
       - run: npm ci --omit=optional
         working-directory: api
+      - run: npm ci
+        working-directory: mcp
       - run: npm test
         working-directory: api
       # The api's copy of the exercise catalogue is generated and committed. A dataset change
@@ -180,3 +182,21 @@ jobs:
           # canDropPrivileges() fails closed, so a missing `coach` user disables every job —
           # including the fixture provider. Cheaper to assert here than to discover on an instance.
           docker run --rm opengym-api:default id coach
+
+  mcp-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f api/Dockerfile.mcp -t opengym-api:mcp .
+      - name: MCP image boots and requires authentication
+        run: |
+          docker run -d --name api-mcp -e DATA_DIR=/data -e ORIGIN=http://localhost:8090 -e RP_ID=localhost -p 8090:3000 opengym-api:mcp
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8090/api/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://localhost:8090/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8090/mcp)" = 401
+          curl -fsS http://localhost:8090/.well-known/oauth-protected-resource/mcp
+      - if: always()
+        run: docker logs api-mcp

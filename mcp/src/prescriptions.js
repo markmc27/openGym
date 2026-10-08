@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { z } from 'zod'
 import { atomicWrite } from '../../api/durable.js'
-import { modeOf, isPerSide } from '../../frontend/src/lib/history.js'
+import { assertPrescriptionCompatible } from '../../frontend/src/lib/session-prescription.js'
 
 const id = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
 const notes = z.string().max(2000)
@@ -57,14 +57,43 @@ export function createPrescription(data, uid, S, input) {
     p.exercises.forEach((e, i) => {
       const cfg = routine.ex[i]
       if (e.position !== i+1 || e.exercise_id !== cfg.id) throw new Error('exercise position/id must match the routine')
-      if (modeOf({ ...cfg, id: cfg.id }) !== 'reps' || isPerSide(cfg) || cfg.intensifier || cfg.warmupSets > 0) throw new Error('v1 prescriptions support straight bilateral rep sets without warm-ups or intensifiers only')
+      assertPrescriptionCompatible(cfg)
     })
-    if (store.sessions.some(s => s.date === p.date && !(S.workouts || []).some(w => w.session_id === s.id))) throw new Error('an unfinished prescription already exists for this date')
-    if (store.sessions.filter(s => !(S.workouts || []).some(w => w.session_id === s.id)).length >= 20) throw new Error('at most 20 unfinished prescriptions')
+    if (store.sessions.some(s => !s.cancelled_at && s.date === p.date && !(S.workouts || []).some(w => w.session_id === s.id))) throw new Error('an unfinished prescription already exists for this date')
+    if (store.sessions.filter(s => !s.cancelled_at && s.date >= today && !(S.workouts || []).some(w => w.session_id === s.id)).length >= 20) throw new Error('at most 20 unfinished prescriptions')
     const { session_id, ...rest } = p
     const saved = { ...rest, id: session_id, created_at: new Date().toISOString(), requestHash: crypto.createHash('sha256').update(request).digest('hex') }
     store.sessions.push(saved); store.version++
     atomicWrite(file, JSON.stringify(store), 0o600)
     return saved
+  } finally { fs.closeSync(lock); fs.unlinkSync(file + '.lock') }
+}
+
+export function cancelPrescription(data, uid, S, sessionId) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(uid)) throw new Error('invalid profile')
+  const file = path.join(data, `prescriptions-${uid}.json`)
+  const lock = fs.openSync(file + '.lock', 'wx', 0o600)
+  try {
+    const store = readPrescriptions(data, uid)
+    const session = store.sessions.find(s => s.id === sessionId)
+    if (!session) throw new Error('session not found')
+    if ((S?.workouts || []).some(w => w.session_id === sessionId)) throw new Error('completed sessions cannot be cancelled')
+    if (!session.cancelled_at) {
+      session.cancelled_at = new Date().toISOString()
+      store.version++
+      atomicWrite(file, JSON.stringify(store), 0o600)
+    }
+    return session
+  } finally { fs.closeSync(lock); fs.unlinkSync(file + '.lock') }
+}
+
+export function removeProfile(data, uid) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(uid)) throw new Error('invalid profile')
+  const file = path.join(data, `prescriptions-${uid}.json`)
+  const lock = fs.openSync(file + '.lock', 'wx', 0o600)
+  try {
+    for (const name of [file, file + '.tmp']) {
+      try { fs.unlinkSync(name) } catch (e) { if (e.code !== 'ENOENT') throw e }
+    }
   } finally { fs.closeSync(lock); fs.unlinkSync(file + '.lock') }
 }

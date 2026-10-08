@@ -1,0 +1,23 @@
+# Optional public HTTPS access. The operator supplies the token privately on the Pi.
+# Use together with compose.pi.yaml after configuring the HTTPS application origin.
+services:
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.0
+    user: '1000:1000'
+    command: [tunnel, --no-autoupdate, run, --token-file, /run/tunnel-token]
+    volumes:
+      - type: bind
+        source: ./tunnel-token
+        target: /run/tunnel-token
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.5
+    depends_on:
+      web:
+        condition: service_started

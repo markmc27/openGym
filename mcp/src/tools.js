@@ -2,9 +2,9 @@
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
 import { z } from 'zod'
-import { getState, getUser, setNextSession } from './state.js'
+import { getState, getUser, setNextSession, cancelSession } from './state.js'
 import { prescriptionSchema } from './prescriptions.js'
-import { sessionComparison, prescriptionFor, applyPrescription } from '../../frontend/src/lib/session-prescription.js'
+import { sessionComparison, prescriptionStatus, prescriptionFor, applyPrescription } from '../../frontend/src/lib/session-prescription.js'
 import {
   fmt, setLabel, exLine, muscleName, policyName, friendlyDuration, ratio, muscleOrder
 } from './labels.js'
@@ -680,10 +680,12 @@ function noState() {
 }
 
 export const SESSION_TOOLS = [
+  { name: 'cancel_session_prescription', description: 'Cancel one unfinished session prescription by its stable ID. Preserves its original sets and coaching notes; never edits a routine or completed workout. Repeating the cancellation is safe.', schema: { session_id: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/) }, write: true,
+    handler: ({ session_id }) => { const { requestHash, ...saved } = cancelSession(session_id); return saved } },
   { name: 'set_next_session', description: 'Write one immutable, dated session prescription for an existing routine. Never changes the master routine. V1 supports straight bilateral rep sets only. Supply all exercises in routine order and a stable session_id; identical retries are safe. Load is in the profile unit. RIR/RPE are targets, not completed effort.', schema: prescriptionSchema.shape, write: true,
     handler: input => { const { requestHash, ...saved } = setNextSession(input); return saved } },
   { name: 'list_sessions', description: 'List dated prescribed sessions with stable IDs and their completion status.', schema: {},
-    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(({ requestHash, ...p }) => ({ ...p, status: S.workouts.some(w => w.session_id === p.id) ? 'completed' : 'planned' })) } } },
+    handler: () => { const S = getState(); return { sessions: (S?.sessionPrescriptions || []).map(({ requestHash, ...p }) => ({ ...p, status: prescriptionStatus(p, (S.workouts || []).find(w => w.session_id === p.id)) })) } } },
   { name: 'get_session', description: 'Read one prescribed session and the actual completed workout, including skipped exercises, changed rows, RIR/RPE and notes. Completed data appears after the athlete finishes and syncs.', schema: { session_id: z.string().min(1).max(128) },
     handler: ({ session_id }) => { const S = getState(); const p = S?.sessionPrescriptions?.find(p => p.id === session_id); if (!p) throw new Error('session not found'); const { requestHash, ...safe } = p; return sessionComparison(safe, S.workouts.find(w => w.session_id === session_id), S.unit || 'kg') } },
   { name: 'get_exercise_history', description: 'Read recent completed workouts for one exercise with raw set rows, effort ratings and notes.', schema: { exercise_id: z.string().min(1).max(128), limit: z.number().int().min(1).max(100).default(20) },

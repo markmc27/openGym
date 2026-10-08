@@ -1,5 +1,6 @@
+import { copyRowAt } from './history.js'
 import { it, expect } from 'vitest'
-import { applyPrescription, prescriptionFor, sessionComparison } from './session-prescription.js'
+import { applyPrescription, prescriptionFor, sessionComparison, prescriptionStatus } from './session-prescription.js'
 import { buildCompletedWorkout } from './finish-workout.js'
 const p = { id:'session-1', date:'2026-10-11', routine_id:'lower', unit:'kg', exercises:[{position:1,exercise_id:'hack',notes:'Controlled eccentric',sets:[{load:50,reps:7,rir:2},{load:50,reps:7}]}] }
 it('selects only the dated single routine and does not reuse a completed prescription',()=>{
@@ -26,4 +27,27 @@ it('retains the immutable prescription when skipped work disappears from complet
   expect(w.entries).toEqual([])
   expect(sessionComparison(p,w).exercises[0].skipped_exercise).toBe(true)
   expect(w.prescription).toEqual(p)
+})
+
+it('copied rows are extra sets, not another claimant to the prescribed set',()=>{
+  const entry=applyPrescription([{id:'hack',rid:'lower',sets:[]}],p,'kg')[0]
+  entry.sets=copyRowAt(entry.sets,0)
+  entry.sets[1].done=true
+  expect(entry.sets[1].prescriptionSet).toBeUndefined()
+  expect(entry.sets[1].actualSetId).not.toBe(entry.sets[0].actualSetId)
+  const c=sessionComparison(p,{d:p.date,entries:[entry]})
+  expect(c.exercises[0].extra_sets).toHaveLength(1)
+  expect(c.exercises[0].extra_sets[0].done).toBe(true)
+})
+it('revalidates modes, sides, warm-ups and intensifiers after a routine edit',()=>{
+  for(const target of [{mode:'time'},{side:true},{warmupSets:2},{intensifier:'drop'}]) {
+    expect(()=>applyPrescription([{id:'hack',target,sets:[]}],{...p,exercises:[p.exercises[0]]},'kg')).toThrow(/bilateral/)
+  }
+})
+it('cancelled sessions are not selected and expired sessions remain queryable for backfill',()=>{
+  expect(prescriptionFor({sessionPrescriptions:[{...p,cancelled_at:'now'}]},p.date,['lower'])).toBeNull()
+  expect(prescriptionStatus(p,null,'2026-10-12')).toBe('expired')
+  expect(prescriptionStatus({...p,cancelled_at:'now'},null,p.date)).toBe('cancelled')
+  expect(prescriptionStatus(p,{d:p.date},p.date)).toBe('completed')
+  expect(prescriptionFor({sessionPrescriptions:[p]},p.date,['lower'])).toEqual(p)
 })

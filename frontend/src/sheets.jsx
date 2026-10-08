@@ -2369,27 +2369,39 @@ export function WorkoutRow({ w, onClick }) {
 /* ============================ workout lifecycle ============================ */
 // `routineIds` accepts `string | string[] | null` — `[r.id]` for one routine,
 // `effectiveRoutineIds(...)` for today's planned session, `[]` / null for explicit freestyle.
+let pendingStart = false
 export function startFlow(routineIds) {
-  if (useStore.getState().user && useStore.getState().config?.mcp) {
-    api('/api/session-prescriptions').then(fields => {
-      const st = S()
-      const prescribed = prescriptionFor({ ...st, ...fields }, todayISO(), routineIds)
-      const begin = bw => beginWorkout(routineIds, bw, prescribed)
-      if (st.weighIn === false) begin(null)
-      else bwSheet({ required: true, onDone: begin })
-    }).catch(() => toast(t('Sync failed — retrying when back online.')))
-    return
+  if (pendingStart || S().active) return
+  const owner = useStore.getState().user?.id
+  const date = todayISO()
+  const stillCurrent = () => useStore.getState().user?.id === owner && !S().active && todayISO() === date
+  const open = fields => {
+    if (!stillCurrent()) return
+    const st = S()
+    const prescribed = prescriptionFor({ ...st, ...fields }, date, routineIds)
+    const begin = bw => {
+      if (stillCurrent()) beginWorkout(routineIds, bw, prescribed || null)
+    }
+    if (st.weighIn === false) begin(null)
+    else bwSheet({ required: true, onDone: begin })
   }
-  // The weigh-in is a setting (Settings → During a workout, issue #137): off goes straight
-  // into the session with no body weight on it, same as "Start without weighing in".
-  if (S().weighIn === false) { beginWorkout(routineIds, null); return }
-  bwSheet({ required: true, onDone: bw => beginWorkout(routineIds, bw) })
+  if (owner && useStore.getState().config?.mcp) {
+    pendingStart = true
+    return api('/api/session-prescriptions').then(fields => open(fields)).catch(e => {
+      if (!stillCurrent()) return
+      // Authentication failures must not start a workout under a stale account.
+      if (e.status === 401 || e.status === 403) { toast(t('Sign in')); return }
+      toast(t('Offline'))
+      open({ sessionPrescriptions: S().sessionPrescriptions || [] })
+    }).finally(() => { pendingStart = false })
+  }
+  open({})
 }
 export function beginWorkout(routineIds, bw, prescribed) {
   const st = S()
   const built = buildCombinedEntries(st, routineIds)
   const { routineIds: rids, routines } = built
-  const prescription = prescribed || prescriptionFor(st, todayISO(), rids)
+  const prescription = prescribed === undefined ? prescriptionFor(st, todayISO(), rids) : prescribed
   let entries
   try { entries = applyPrescription(built.entries, prescription, st.unit || 'kg') }
   catch (e) { toast(e.message); return }
@@ -2526,10 +2538,16 @@ function beginBackfill({ iso, time, durationMin, routineIds, replaceId }) {
   const st = S()
   const start = backfillStart(iso, time)
   const past = historyAsOf(st, { d: iso, start, replaceId })
-  const { entries, routineIds: rids, routines } = buildCombinedEntries(past, routineIds || [])
+  const built = buildCombinedEntries(past, routineIds || [])
+  const { routineIds: rids, routines } = built
+  const prescription = prescriptionFor(past, iso, rids)
+  let entries
+  try { entries = applyPrescription(built.entries, prescription, st.unit || 'kg') }
+  catch (e) { toast(e.message); return }
   update(s => {
     s.active = {
-      id: uid(), d: iso, start,
+      id: prescription?.id || uid(), d: iso, start,
+      ...(prescription ? { session_id: prescription.id, prescription: structuredClone(prescription), coachingNotes: prescription.notes || '' } : {}),
       routineIds: rids,
       name: routines.length ? deriveSessionName(routines.map(r => r.name)) : t('Freestyle'),
       bw: null, cur: 0, entries,

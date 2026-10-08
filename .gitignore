@@ -7,6 +7,7 @@ data/
 
 # Local config
 .env
+tunnel-token
 
 # Build output / deps
 frontend/dist/

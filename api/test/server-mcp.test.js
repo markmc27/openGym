@@ -15,7 +15,7 @@ test('MCP-enabled API isolates prescription files from whole-state sync and othe
   const secret = 'fixture-only-mcp-secret'
   const cookie = uid => {const p=`${uid}:${Date.now()+60000}:0`;return `gymsid=${p}.${crypto.createHmac('sha256',secret).update(p).digest('base64url')}`}
   fs.writeFileSync(path.join(data,'secret'),secret)
-  fs.writeFileSync(path.join(data,'db.json'),JSON.stringify({users:[{id:'a',name:'A'},{id:'b',name:'B'}],creds:[],subs:[],invites:[]}))
+  fs.writeFileSync(path.join(data,'db.json'),JSON.stringify({users:[{id:'a',name:'A',admin:true},{id:'b',name:'B'}],creds:[],subs:[],invites:[]}))
   const state={workouts:[],routines:[],unit:'kg',_rev:1}
   fs.writeFileSync(path.join(data,'state-a.json'),JSON.stringify(state))
   fs.writeFileSync(path.join(data,'prescriptions-a.json'),JSON.stringify({version:1,sessions:[{id:'session-a',date:'2026-10-11',routine_id:'lower',unit:'kg',notes:'Private A',exercises:[]}]}))
@@ -34,5 +34,10 @@ test('MCP-enabled API isolates prescription files from whole-state sync and othe
   const p=await req('/api/data','PUT',{state:{...state,sessionPrescriptions:[{id:'forged'}],sessionPrescriptionsVersion:999},baseRev:1});assert.equal(p.status,200)
   const after=await req('/api/data');assert.equal(after.json().state.sessionPrescriptions[0].id,'session-a')
   const saved=JSON.parse(fs.readFileSync(path.join(data,'state-a.json')));assert.equal(saved.sessionPrescriptions,undefined)
+  fs.writeFileSync(path.join(data,'prescriptions-b.json'),JSON.stringify({version:1,sessions:[{id:'private-b',notes:'B coaching notes'}]}))
+  const deleted=await req('/api/admin/user/delete','POST',{id:'b'})
+  assert.equal(deleted.status,200)
+  assert.equal(fs.existsSync(path.join(data,'prescriptions-b.json')),false)
+  assert.equal(fs.existsSync(path.join(data,'prescriptions-a.json')),true)
   const mcp=await req('/mcp','POST',{jsonrpc:'2.0',id:1,method:'tools/list'});assert.equal(mcp.status,401,'ordinary app cookies must not authorize remote MCP')
 })

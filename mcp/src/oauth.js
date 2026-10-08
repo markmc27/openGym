@@ -17,10 +17,22 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
   try { db = JSON.parse(fs.readFileSync(file, 'utf8')) }
   catch (e) { if (e.code !== 'ENOENT') throw new Error('MCP OAuth storage unreadable'); db = { clients: {}, tokens: {} } }
   const pending = new Map(), codes = new Map()
+  const securityVersion = uid => userById(uid)?.sv || 0
+  const validOwner = grant => !!userById(grant.uid) && grant.sv === securityVersion(grant.uid)
+  const revokeFamily = family => {
+    for (const [key, value] of Object.entries(db.tokens)) {
+      if (value.family === family) delete db.tokens[key]
+    }
+  }
+  const clientInUse = id => Object.values(db.tokens).some(t => t.clientId === id && t.kind !== 'consumed' && t.expires > seconds())
+    || [...pending.values(), ...codes.values()].some(t => t.clientId === id && t.expires > seconds())
   const sweep = () => {
     for (const [k,v] of pending) if (v.expires <= seconds()) pending.delete(k)
     for (const [k,v] of codes) if (v.expires <= seconds()) codes.delete(k)
-    for (const [k,v] of Object.entries(db.tokens)) if (v.expires <= seconds()) delete db.tokens[k]
+    for (const [k,v] of Object.entries(db.tokens)) if (v.expires <= seconds() || !validOwner(v)) delete db.tokens[k]
+    for (const [id, client] of Object.entries(db.clients)) {
+      if (!clientInUse(id) && (client.client_id_issued_at || 0) + 3600 <= seconds()) delete db.clients[id]
+    }
   }
   const save = () => { sweep(); atomicWrite(file, JSON.stringify(db), 0o600) }
   const target = r => { if (!r || r.href !== resource.href) throw new InvalidTargetError('resource must exactly match this MCP endpoint') }
@@ -31,7 +43,7 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
   }
   const record = (collection, key, client) => {
     const v = collection instanceof Map ? collection.get(hash(key)) : collection[hash(key)]
-    if (!v || v.clientId !== client.client_id || v.expires <= seconds() || !userById(v.uid)) throw new InvalidGrantError('invalid or expired grant')
+    if (!v || v.clientId !== client.client_id || v.expires <= seconds() || !validOwner(v)) throw new InvalidGrantError('invalid or expired grant')
     return v
   }
   const mint = grant => {
@@ -43,10 +55,15 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
   }
   const provider = {
     clientsStore: {
-      getClient: id => db.clients[id],
+      getClient: id => { sweep(); return db.clients[id] },
       registerClient: client => {
         sweep()
-        if (Object.keys(db.clients).length >= 100) throw new InvalidClientError('client limit reached')
+        if (Object.keys(db.clients).length >= 100) {
+          const unused = Object.values(db.clients).filter(c => !clientInUse(c.client_id))
+            .sort((a,b) => a.client_id_issued_at - b.client_id_issued_at)[0]
+          if (!unused) throw new InvalidClientError('active client limit reached')
+          delete db.clients[unused.client_id]
+        }
         if (!client.redirect_uris?.length || client.redirect_uris.some(u => !redirectUris.includes(u))) throw new InvalidClientError('redirect URI is not on the operator allowlist')
         if (client.token_endpoint_auth_method !== 'none') throw new InvalidClientError('only public PKCE clients supported')
         const registered = { ...client, client_id: random(), client_id_issued_at: seconds(), token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }
@@ -85,7 +102,7 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
       if (req.body.decision !== 'allow') callback.searchParams.set('error', 'access_denied')
       else {
         const code = random()
-        codes.set(hash(code), { uid: user.id, clientId: p.clientId, scopes: p.scopes, challenge: p.params.codeChallenge, redirectUri: p.params.redirectUri, resource: p.params.resource.href, expires: seconds() + 120 })
+        codes.set(hash(code), { uid: user.id, sv: securityVersion(user.id), clientId: p.clientId, scopes: p.scopes, challenge: p.params.codeChallenge, redirectUri: p.params.redirectUri, resource: p.params.resource.href, expires: seconds() + 120 })
         callback.searchParams.set('code', code)
       }
       res.redirect(callback.href)
@@ -96,26 +113,38 @@ export function createOAuthProvider({ data, issuer, resource, readSession, userB
       const grant = record(codes, code, client)
       if (redirectUri !== grant.redirectUri) throw new InvalidGrantError('redirect mismatch')
       codes.delete(hash(code))
-      return mint({ uid: grant.uid, clientId: grant.clientId, scopes: grant.scopes, resource: grant.resource })
+      return mint({ uid: grant.uid, sv: grant.sv, clientId: grant.clientId, scopes: grant.scopes, resource: grant.resource })
     },
     async exchangeRefreshToken(client, token, scopes, requestedResource) {
       target(requestedResource)
       const grant = record(db.tokens, token, client)
+      if (grant.kind === 'consumed') {
+        revokeFamily(grant.family)
+        save()
+        throw new InvalidGrantError('refresh token reuse; reconnect required')
+      }
       if (grant.kind !== 'refresh') throw new InvalidGrantError('not a refresh token')
       const narrowed = scopes?.length ? scopesOf(scopes) : grant.scopes
       if (narrowed.some(s => !grant.scopes.includes(s))) throw new InvalidScopeError('cannot expand scope during refresh')
-      delete db.tokens[hash(token)]
-      return mint({ uid: grant.uid, clientId: grant.clientId, scopes: narrowed, resource: grant.resource, family: grant.family })
+      db.tokens[hash(token)] = { ...grant, kind: 'consumed' }
+      return mint({ uid: grant.uid, sv: grant.sv, clientId: grant.clientId, scopes: narrowed, resource: grant.resource, family: grant.family })
     },
     async verifyAccessToken(token) {
       const grant = db.tokens[hash(token)]
-      if (!grant || grant.kind !== 'access' || grant.expires <= seconds() || grant.resource !== resource.href || !userById(grant.uid)) throw new InvalidTokenError('invalid or expired access token')
+      if (!grant || grant.kind !== 'access' || grant.expires <= seconds() || grant.resource !== resource.href || !validOwner(grant)) throw new InvalidTokenError('invalid or expired access token')
       return { token, clientId: grant.clientId, scopes: grant.scopes, expiresAt: grant.expires, resource, extra: { uid: grant.uid } }
+    },
+    removeProfile(uid) {
+      for (const [key, grant] of Object.entries(db.tokens)) if (grant.uid === uid) delete db.tokens[key]
+      for (const collection of [pending, codes]) {
+        for (const [key, grant] of collection) if (grant.uid === uid) collection.delete(key)
+      }
+      save()
     },
     async revokeToken(client, { token }) {
       const grant = db.tokens[hash(token)]
       if (grant?.clientId === client.client_id) {
-        for (const [key, value] of Object.entries(db.tokens)) if (value.family === grant.family) delete db.tokens[key]
+        revokeFamily(grant.family)
         save()
       }
     },

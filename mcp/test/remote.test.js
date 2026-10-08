@@ -1,3 +1,5 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { beforeEach, afterEach, describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -5,7 +7,7 @@ import path from 'node:path'
 import http from 'node:http'
 import crypto from 'node:crypto'
 import { createHttpHandler } from '../src/http.js'
-import { createPrescription, readPrescriptions } from '../src/prescriptions.js'
+import { createPrescription, readPrescriptions, cancelPrescription, removeProfile } from '../src/prescriptions.js'
 import { applyPrescription, sessionComparison } from '../../frontend/src/lib/session-prescription.js'
 import { buildCompletedWorkout } from '../../frontend/src/lib/finish-workout.js'
 
@@ -17,6 +19,7 @@ const user = { id: 'user-a', name: 'Athlete' }
 const date = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 const input = () => ({ session_id: 'sunday-1', date: date(), routine_id: 'lower', unit: 'kg', notes: 'Controlled eccentric', exercises: [{ position: 1, exercise_id: '0043', sets: [{ reps: 7, load: 50, rir: 2 }, { reps: 7, load: 50 }] }] })
 beforeEach(async () => {
+  user.sv = 0
   data = fs.mkdtempSync(path.join(os.tmpdir(), 'opengym-test-'))
   S = { unit: 'kg', workouts: [], routines: [{ id: 'lower', name: 'Lower', ex: [{ id: '0043', sets: 4, reps: 8, weight: 20 }] }], week: {}, dayPlan: {}, bodyweight: [], exWeights: {} }
   const app = createHttpHandler({ origin, data, redirectUris: [redirect], readSession: req => req.headers.cookie === 'test=a' ? user : null,
@@ -100,6 +103,9 @@ describe('remote MCP authorization',()=>{
     expect(r.status).toBe(200)
     const next=await r.json()
     expect((await request('/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:refresh})).status).toBe(400)
+    expect((await request('/mcp',{method:'POST',headers:{Authorization:`Bearer ${next.access_token}`}})).status).toBe(401)
+    const replacement = new URLSearchParams(refresh); replacement.set('refresh_token', next.refresh_token)
+    expect((await request('/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:replacement})).status).toBe(400)
     const revoke=await request('/revoke',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client.client_id,token:next.refresh_token})})
     expect(revoke.status).toBe(200)
     expect((await request('/mcp',{method:'POST',headers:{Authorization:`Bearer ${tokens.access_token}`}})).status).toBe(401)
@@ -133,4 +139,78 @@ describe('prescription lifecycle',()=>{
     expect(()=>createPrescription(data,user.id,S,{...input(),session_id:'other'})).toThrow(/unfinished/)
     expect(readPrescriptions(data,'user-b').sessions).toEqual([])
   })
+})
+
+it('password recovery invalidates both MCP access and refresh tokens',async()=>{
+  const {tokens,client}=await grant()
+  user.sv++
+  expect((await request('/mcp',{method:'POST',headers:{Authorization:`Bearer ${tokens.access_token}`}})).status).toBe(401)
+  expect((await request('/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',client_id:client.client_id,refresh_token:tokens.refresh_token,resource})})).status).toBe(400)
+})
+
+it('MCP read/write persists across server restart and a reopened OAuth store',async()=>{
+  const {tokens}=await grant()
+  await mcp(tokens.access_token,'tools/call',{name:'set_next_session',arguments:input()})
+  await new Promise(resolve=>server.close(resolve))
+  const app=createHttpHandler({origin,data,redirectUris:[redirect],readSession:()=>user,userById:id=>id===user.id?user:null,readState:id=>({...S,sessionPrescriptions:readPrescriptions(data,id).sessions})})
+  server=http.createServer(app)
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+  base=`http://127.0.0.1:${server.address().port}`
+  const got=await mcp(tokens.access_token,'tools/call',{name:'get_session',arguments:{session_id:'sunday-1'}})
+  expect(got.result.structuredContent.prescribed.exercises[0].sets[0].load).toBe(50)
+  expect(got.result.structuredContent.status).toBe('planned')
+  expect(S.routines[0].ex[0].weight).toBe(20)
+})
+
+it('expired and cancelled sessions do not exhaust future prescription capacity',()=>{
+  const old=Array.from({length:20},(_,i)=>({id:'expired-'+i,date:'2000-01-01',routine_id:'lower',exercises:[]}))
+  fs.writeFileSync(path.join(data,`prescriptions-${user.id}.json`),JSON.stringify({version:20,sessions:old}))
+  const p=createPrescription(data,user.id,S,input())
+  const cancelled=cancelPrescription(data,user.id,S,p.id)
+  expect(cancelPrescription(data,user.id,S,p.id)).toEqual(cancelled)
+  expect(cancelled.exercises).toEqual(p.exercises)
+  expect(createPrescription(data,user.id,S,{...input(),session_id:'replacement'}).id).toBe('replacement')
+  expect(()=>cancelPrescription(data,user.id,{...S,workouts:[{session_id:'replacement'}]},'replacement')).toThrow(/completed/)
+})
+
+it('profile deletion removes prescription data without affecting another profile',()=>{
+  createPrescription(data,user.id,S,input())
+  createPrescription(data,'user-b',S,input())
+  removeProfile(data,user.id)
+  expect(readPrescriptions(data,user.id).sessions).toEqual([])
+  expect(readPrescriptions(data,'user-b').sessions).toHaveLength(1)
+})
+
+it('official MCP client discovers tools, reads, writes and reads the prescription back',async()=>{
+  const {tokens}=await grant()
+  const client=new Client({name:'chatgpt-acceptance-fixture',version:'1.0'})
+  const transport=new StreamableHTTPClientTransport(new URL(base+'/mcp'),{
+    requestInit:{headers:{Authorization:`Bearer ${tokens.access_token}`}},
+    // Route through the mock reverse proxy without relying on fetch's Host override.
+    fetch:async(url,opts={})=>{
+      const response=await request(new URL(url).pathname,{...opts,headers:Object.fromEntries(new Headers(opts.headers))})
+      return new Response(await response.text(),{status:response.status,headers:{'Content-Type':'application/json'}})
+    },
+  })
+  try {
+    await client.connect(transport)
+    const list=await client.listTools()
+    expect(list.tools.find(t=>t.name==='get_session').annotations.readOnlyHint).toBe(true)
+    expect(list.tools.find(t=>t.name==='set_next_session').annotations.readOnlyHint).toBe(false)
+    expect((await client.callTool({name:'list_sessions',arguments:{}})).structuredContent.sessions).toEqual([])
+    const written=await client.callTool({name:'set_next_session',arguments:input()})
+    expect(written.structuredContent.id).toBe('sunday-1')
+    const read=await client.callTool({name:'get_session',arguments:{session_id:'sunday-1'}})
+    expect(read.structuredContent.prescribed.notes).toBe('Controlled eccentric')
+    const invalid=await client.callTool({name:'set_next_session',arguments:{...input(),exercises:[{...input().exercises[0],sets:[{load:-1,reps:7}]}]}})
+    expect(invalid.isError).toBe(true)
+  } finally {await client.close()}
+})
+
+it('revoking a consumed refresh token still revokes its grant family',async()=>{
+  const {tokens,client}=await grant()
+  const r=await request('/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',client_id:client.client_id,refresh_token:tokens.refresh_token,resource})})
+  const next=await r.json()
+  await request('/revoke',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client.client_id,token:tokens.refresh_token})})
+  expect((await request('/mcp',{method:'POST',headers:{Authorization:`Bearer ${next.access_token}`}})).status).toBe(401)
 })
