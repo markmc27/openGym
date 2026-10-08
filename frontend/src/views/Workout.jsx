@@ -202,6 +202,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const planLine = (() => {
     if (!planned) return null
     const today = entry.target || {}
+    if (entry.exercise && isPerSide(today)) {
+      return <div className="small dim planline" style={{ marginBottom: 4 }}>{t('Plan: {0}', setsRepsOf({ ...planned, mode, reps:planned.reps / 2, repsMin:planned.repsMin ? planned.repsMin / 2 : undefined }))} · {t('Per side')}</div>
+    }
     // A pyramid reads as its targets, as on the routine row: "12 · 8 · 6 · Max · 12", never the
     // set count times the first target (#367). Its rows are the plan; nothing moves them.
     if (isPyramid(today)) return <div className="small dim planline" style={{ marginBottom: 4 }}>{t('Plan: {0}', pyramidLabel(today.pyramid))}</div>

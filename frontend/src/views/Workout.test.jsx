@@ -1643,6 +1643,11 @@ describe('the plan line', () => {
     expect(line()).toBe('Plan: 2 × 10')
   })
 
+  it('shows prescribed unilateral reps per side rather than their combined total', async () => {
+    await mount([planned({exercise:{id:'plain-bench',n:'Synthetic row',eq:'dumbbell',bp:'back'},target:{mode:'reps',side:true,sets:3,reps:16,weight:12},planned:{sets:3,reps:16,weight:12}})])
+    expect(line()).toBe('Plan: 3 × 8 · Per side')
+  })
+
   it('says when progression moved the sets or reps', async () => {
     await mount([planned({ target: { mode: 'reps', sets: 3, reps: 10, weight: 0, bodyweight: true } })])
     expect(line()).toBe('Plan: 2 × 10 · today 3 × 10')
