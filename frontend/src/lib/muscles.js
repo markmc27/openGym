@@ -13,6 +13,7 @@ import { isWarmupRow } from './workout-model.js'
 import { EXIDX, smOf } from './exercises.js'
 import { todayISO, weekKey, MONDAY } from './format.js'
 import { queueOf } from './queue.js'
+import { workoutAt } from './history.js'
 
 // The muscles a map can shade, in head-to-toe order — also the order of any list
 // built from them, so "what am I neglecting" reads top-down like a body.
@@ -288,7 +289,7 @@ export function muscleBalanceWindow(workouts, win, now = Date.now(), today = tod
     ? true
     : win === 7
       ? weekKey(workout.d, ws) === weekKey(today, ws)
-      : (workout.start || new Date(workout.d).getTime()) > now - win * 86400000)
+      : workoutAt(workout) > now - win * 86400000)
 }
 
 /** Load a routine *would* produce, from its planned set counts. */

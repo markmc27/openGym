@@ -1,17 +1,18 @@
 import {useState} from 'react'
 import {useStore} from '../store/useStore.js'
-import {LOAD_CONVENTIONS} from '../lib/training-context.js'
+import {LOAD_CONVENTIONS,loadConventionFor,saveLoadConvention} from '../lib/training-context.js'
 import {Button} from './ui.jsx'
 export default function ExerciseSetupSheet({ex,close}) {
   const S=useStore(s=>s.S),update=useStore(s=>s.update)
   const [owner]=useState(()=>useStore.getState().user?.id)
-  const [convention,setConvention]=useState(S.exerciseContexts?.[ex.id]?.load_convention || 'unspecified')
+  const [convention,setConvention]=useState(loadConventionFor(S,ex))
   const [machine,setMachine]=useState(S.exerciseContexts?.[ex.id]?.machine || '')
   const [aliases,setAliases]=useState((S.exerciseContexts?.[ex.id]?.aliases || []).join(', '))
   const [notes,setNotes]=useState(S.exNotes?.[ex.id] || '')
   const save=()=>{
     if(useStore.getState().user?.id!==owner)return
     update(s=>{
+      saveLoadConvention(s,ex,convention)
       s.exerciseContexts=s.exerciseContexts || {}
       s.exerciseContexts[ex.id]={load_convention:convention,machine:machine.trim().slice(0,200),aliases:aliases.split(',').map(v=>v.trim().slice(0,100)).filter(Boolean).slice(0,5),_ts:Date.now()}
       s.exNotes=s.exNotes || {}

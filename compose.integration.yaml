@@ -1,0 +1,61 @@
+# Isolated upstream-merge test stack. Never uses the production project's images or data.
+name: opengym-upstream-test
+services:
+  api:
+    image: opengym-api:upstream-test-20261018
+    build:
+      context: .
+      dockerfile: api/Dockerfile.mcp
+    user: '1000:1000'
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      DATA_DIR: /test-data
+      PORT: 3000
+      RP_ID: localhost
+      ORIGIN: http://localhost:8091
+      MCP_ENABLED: '1'
+      MCP_ORIGIN: http://localhost:8091
+      MCP_REDIRECT_URIS: http://localhost:8091/test-callback
+      PASSWORD_LOGIN: '1'
+      INVITE_ONLY: '1'
+      ALLOW_GUEST: '0'
+      TRUST_PROXY: '1'
+      TZ: Europe/London
+      OPENGYM_INTEGRATION_TEST: '1'
+    tmpfs:
+      - /test-data:rw,uid=1000,gid=1000,mode=0700,size=64m
+    volumes:
+      - ./scripts/integration-test-server.mjs:/app/scripts/integration-test-server.mjs:ro
+    command: ['node', '/app/scripts/integration-test-server.mjs']
+    mem_limit: 384m
+    cpus: 0.5
+    restart: 'no'
+  web:
+    image: opengym-web:upstream-test-20261018
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        APP_BUILD: upstream-test-20261018
+    environment:
+      NGINX_PORT: 8080
+      BACKEND: api
+      PORT: 3000
+      RESOLVER: 127.0.0.11
+      BASE_PATH: ''
+      CF_CONNECTING_IP: ''
+      MEDIA_UPLOAD_MAX: 48m
+    ports:
+      - '127.0.0.1:8091:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    mem_limit: 96m
+    cpus: 0.5
+    restart: 'no'

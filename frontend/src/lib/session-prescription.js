@@ -50,7 +50,9 @@ export function applyPrescription(entries, prescription, unit) {
         }
         return prescribed.unilateral ? makeSideSet(row) : row
       }),
-      target: { ...entry.target, sets:prescribed.sets.filter(s => s.phase !== 'warmup').length,
+      target: { ...entry.target,
+        ...(prescribed.context && ['dumbbell','kettlebell'].includes(prescribed.exercise?.eq || entry.exercise?.eq) ? {dbLoad:({per_dumbbell:'each',total:'total'})[prescribed.context.load_convention] || 'as'} : {}),
+        sets:prescribed.sets.filter(s => s.phase !== 'warmup').length,
         reps:(prescribed.sets.find(s => s.phase !== 'warmup') || prescribed.sets[0]).reps * (prescribed.unilateral ? 2 : 1) || 0,
         weight:(prescribed.sets.find(s => s.phase !== 'warmup') || prescribed.sets[0]).load * factor },
     }

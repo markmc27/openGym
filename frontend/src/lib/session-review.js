@@ -1,4 +1,5 @@
 import { isSideSet, isWarmupRow, modeForSet } from './workout-model.js'
+import { rirOf } from './effort.js'
 import { sessionComparison } from './session-prescription.js'
 
 // One unilateral pair is one set; a completed limb is half a set. Effort is never inferred.
@@ -13,8 +14,8 @@ export function completedWorkSets(entry, pick) {
 export function effortCounts(workouts) {
   let rated=0,unrated=0
   for (const w of workouts) for (const e of w.entries || []) {
-    rated+=completedWorkSets(e,s=>s.rir!=null || s.rpe!=null)
-    unrated+=completedWorkSets(e,s=>s.rir==null && s.rpe==null)
+    rated+=completedWorkSets(e,s=>rirOf(s)!=null)
+    unrated+=completedWorkSets(e,s=>rirOf(s)==null)
   }
   return {rated_work_sets:rated,unrated_work_sets:unrated}
 }
