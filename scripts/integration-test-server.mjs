@@ -5,6 +5,8 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import {hashPassword} from '../api/password.js'
 import {applyPrescription} from '../frontend/src/lib/session-prescription.js'
+import {buildCombinedEntries} from '../frontend/src/lib/session-merge.js'
+import {prescriptionRoutineId} from '../frontend/src/lib/session-plan.js'
 import {buildCompletedWorkout} from '../frontend/src/lib/finish-workout.js'
 if(process.env.OPENGYM_INTEGRATION_TEST!=='1' || process.env.DATA_DIR!=='/test-data') throw Error('Test-only startup refused')
 const data='/test-data'
@@ -77,9 +79,10 @@ async function smoke(){
   const p=await call('create_session_prescription',{session_id:'isolated-strength',title:'Synthetic strength',date,unit:'kg',exercises:[{position:1,exercise_id:'0289',mode:'reps',sets:[{load:12,reps:8,rir:2},{load:12,reps:8,rir:2}]}]})
   await json('/api/session-prescriptions/start',{session_id:p.id,revision:p.revision},cookie)
   const state=await (await request('/api/data',{headers:{Cookie:cookie}})).json()
-  const entries=applyPrescription([{id:'0289',target:{dbLoad:'total'},sets:[]}],p,'kg')
+  const built=buildCombinedEntries(state.state,[prescriptionRoutineId(p)])
+  const entries=applyPrescription(built.entries,p,'kg')
   entries[0].sets[0]={...entries[0].sets[0],w:10,r:7,rir:3,done:true}
-  const w=buildCompletedWorkout({id:'synthetic-completed',d:date,start:Date.now()-60000,session_id:p.id,prescription:p,entries})
+  const w=buildCompletedWorkout({id:'synthetic-completed',d:date,start:Date.now()-60000,session_id:p.id,prescription:p,routineIds:built.routineIds,entries})
   const saved=await request('/api/data',{method:'PUT',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({state:{...state.state,workouts:[w]},baseRev:state.rev})})
   assert.equal(saved.status,200)
   const reviewed=await call('get_session',{session_id:p.id})

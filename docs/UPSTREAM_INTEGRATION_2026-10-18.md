@@ -37,3 +37,17 @@ docker compose -f compose.integration.yaml exec -T api cat /tmp/integration-resu
 The smoke test covers bundled media, login, closed signup, anonymous MCP rejection, OAuth PKCE/consent, 20 tool annotations, context, prescription creation, start, changed load/reps, skipped work, completion sync and MCP appraisal. It checks the master routine remains unchanged.
 
 Production resources `/home/mark/opengym`, `opengym-api-1`, `opengym-web-1`, `opengym-tunnel-1`, their data and Cloudflare routing are outside this test deployment. Compare their IDs and start times before/after to confirm they were not recreated or restarted.
+
+## Verified results
+
+- Frontend: 5,098 tests passed in 407 test files.
+- API: 597 tests passed.
+- MCP: 117 tests passed in six test files.
+- Total: 5,812 tests passed. Production frontend build, plain-Node MCP import graph and generated API reference checks passed.
+- ARM64 test API and web images built successfully on the authorised Pi. Both test services started and the proxy smoke workflow passed, including actual load/reps differences (-2 kg, -1 rep), a skipped set, one completed work set and an unchanged master routine.
+- Runtime users: API 1000, nginx 101. The test web is healthy; API health is checked every 30 seconds.
+- All production container IDs and start times were unchanged after the test. Production health remained successful.
+
+The Node smoke client uses `node:http` so its explicit canonical Host header reaches nginx (Node fetch drops that header). The fixture builds entries through the real combined-session builder so it carries the same routine/session identity as the app. The initial smoke harness omissions were corrected; neither required weakening host checks or changing production.
+
+Docker on this Pi reports that kernel memory-limit capabilities are unavailable. The Compose memory limits therefore are not an enforced isolation boundary; source, image tags, project network, RAM-backed test data and private port remain separate.
