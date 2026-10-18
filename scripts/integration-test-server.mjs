@@ -1,6 +1,7 @@
 // Starts only the synthetic, RAM-backed test API. No production accounts or data are read.
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import http from 'node:http'
 import assert from 'node:assert/strict'
 import {hashPassword} from '../api/password.js'
 import {applyPrescription} from '../frontend/src/lib/session-prescription.js'
@@ -16,8 +17,19 @@ const original={unit:'kg',routines:[{id:'master',name:'Untouched synthetic maste
 fs.writeFileSync(`${data}/state-${uid}.json`,JSON.stringify(original),{mode:0o600})
 await import('../api/server.js')
 const origin='http://localhost:8091', resource=origin+'/mcp', checks=[]
-async function request(route, options={}) {
-  return fetch('http://web:8080'+route,{...options,redirect:'manual',headers:{Host:'localhost:8091',Origin:origin,...options.headers}})
+function request(route, options={}) {
+  // Node's fetch drops a caller's Host header. Use HTTP directly so the proxy sees the same
+  // canonical host a browser reaching localhost:8091 sends, while connecting via Docker DNS.
+  return new Promise((resolve,reject)=>{
+    const req=http.request('http://web:8080'+route,{method:options.method || 'GET',headers:{Host:'localhost:8091',Origin:origin,...options.headers}},res=>{
+      const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>{
+        const headers=new Headers()
+        for(const [k,v] of Object.entries(res.headers))for(const x of [].concat(v || []))headers.append(k,x)
+        resolve(new Response([204,205,304].includes(res.statusCode)?null:Buffer.concat(chunks),{status:res.statusCode,headers}))
+      });res.on('error',reject)
+    });req.on('error',reject);req.setTimeout(15000,()=>req.destroy(Error('Test request timed out')))
+    req.end(options.body instanceof URLSearchParams ? options.body.toString() : options.body)
+  })
 }
 async function json(route,body,cookie){
   const r=await request(route,{method:'POST',headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},body:JSON.stringify(body)})
@@ -72,8 +84,12 @@ async function smoke(){
   assert.equal(saved.status,200)
   const reviewed=await call('get_session',{session_id:p.id})
   assert.equal(reviewed.status,'completed')
+  assert.equal(reviewed.exercises[0].comparison[0].load_difference,-2)
+  assert.equal(reviewed.exercises[0].comparison[0].reps_difference,-1)
+  assert.equal(reviewed.exercises[0].comparison[1].status,'skipped')
   const summary=await call('get_training_summary',{from:date,to:date})
   assert.ok(JSON.stringify(summary).includes('isolated-strength'))
+  assert.equal(summary.completed_workouts,1);assert.equal(summary.work_sets_by_exercise['0289'],1)
   const final=await (await request('/api/data',{headers:{Cookie:cookie}})).json()
   assert.deepEqual(final.state.routines,original.routines)
   assert.equal(final.state.workouts[0].entries[0].target.dbLoad,'each')
