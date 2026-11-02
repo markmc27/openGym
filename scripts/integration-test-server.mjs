@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import assert from 'node:assert/strict'
 import {hashPassword} from '../api/password.js'
+import {askAdminSocket} from '../api/admin-socket.js'
 import {applyPrescription} from '../frontend/src/lib/session-prescription.js'
 import {buildCombinedEntries} from '../frontend/src/lib/session-merge.js'
 import {prescriptionRoutineId} from '../frontend/src/lib/session-plan.js'
@@ -14,16 +15,16 @@ if(fs.existsSync(data+'/db.json')) throw Error('Test startup requires an empty R
 const password=crypto.randomBytes(32).toString('base64url')
 const uid='upstream-integration-a'
 const created=new Date().toISOString()
-fs.writeFileSync(data+'/db.json',JSON.stringify({users:[{id:uid,name:'Synthetic Integration',created,pw:{h:await hashPassword(password),set:created}}],creds:[],subs:[],invites:[]}),{mode:0o600})
-const original={unit:'kg',routines:[{id:'master',name:'Untouched synthetic master',ex:[{id:'0289',sets:3,reps:10,weight:20}]}],workouts:[],week:{},customEx:[],dbLoad:{'0289':{mode:'each',_ts:1}},dumbbells:{kg:{weights:[10,12,14],_ts:1}}}
+fs.writeFileSync(data+'/db.json',JSON.stringify({users:[{id:uid,name:'Synthetic Integration',admin:true,created,pw:{h:await hashPassword(password),set:created}}],creds:[],subs:[],invites:[]}),{mode:0o600})
+const original={exAliases:{'0289':['Synthetic chest press']},stackWeights:{'0743':{unit:'kg',weights:[5,11.3,18.1],_ts:1}},unit:'kg',routines:[{id:'master',name:'Untouched synthetic master',ex:[{id:'0289',sets:3,reps:10,weight:20}]}],workouts:[],week:{},customEx:[],dbLoad:{'0289':{mode:'each',_ts:1}},dumbbells:{kg:{weights:[10,12,14],_ts:1}}}
 fs.writeFileSync(`${data}/state-${uid}.json`,JSON.stringify(original),{mode:0o600})
 await import('../api/server.js')
-const origin='http://localhost:8091', resource=origin+'/mcp', checks=[]
+const origin='http://localhost:8092', resource=origin+'/mcp', checks=[]
 function request(route, options={}) {
   // Node's fetch drops a caller's Host header. Use HTTP directly so the proxy sees the same
-  // canonical host a browser reaching localhost:8091 sends, while connecting via Docker DNS.
+  // canonical host a browser reaching localhost:8092 sends, while connecting via Docker DNS.
   return new Promise((resolve,reject)=>{
-    const req=http.request('http://web:8080'+route,{method:options.method || 'GET',headers:{Host:'localhost:8091',Origin:origin,...options.headers}},res=>{
+    const req=http.request('http://web:8080'+route,{method:options.method || 'GET',headers:{Host:'localhost:8092',Origin:origin,...options.headers}},res=>{
       const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>{
         const headers=new Headers()
         for(const [k,v] of Object.entries(res.headers))for(const x of [].concat(v || []))headers.append(k,x)
@@ -44,13 +45,15 @@ async function smoke(){
     if(i===89)throw Error('Test web proxy did not become ready')
     await new Promise(r=>setTimeout(r,1000))
   }
-  assert.equal((await request('/')).status,200);checks.push('web and API health through nginx')
+  const homepage=await request('/');assert.equal(homepage.status,200);assert.ok(homepage.headers.get('content-security-policy').includes("script-src 'self'"));checks.push('web/API health and CSP through nginx')
   assert.equal((await request('/exercise-media/still/0289.webp')).status,200);checks.push('bundled exercise media')
   assert.equal((await request('/mcp',{method:'POST'})).status,401)
   for(const route of ['/api/register/password','/api/register/options'])assert.equal((await request(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Denied signup'})})).status,403)
   checks.push('anonymous MCP and both uninvited signup methods refused')
   const login=await json('/api/login/password',{name:'Synthetic Integration',password})
   const cookie=login.headers.get('set-cookie').split(';')[0]
+  const accounts=await (await request('/api/admin/users',{headers:{Cookie:cookie}})).json()
+  assert.equal(accounts.users.find(u=>u.id===uid).owner,true)
   const reg=await request('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_name:'Isolated smoke test',redirect_uris:[origin+'/test-callback'],grant_types:['authorization_code','refresh_token'],response_types:['code'],token_endpoint_auth_method:'none'})})
   assert.equal(reg.status,201);const client=await reg.json()
   const verifier=crypto.randomBytes(32).toString('base64url')
@@ -69,12 +72,12 @@ async function smoke(){
   }
   async function call(name,args={}){const r=await mcp('tools/call',{name,arguments:args});assert.ok(!r.isError,`${name} returned an error`);return r.structuredContent}
   await mcp('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'merge-smoke',version:'1'}})
-  const list=await mcp('tools/list',{});assert.equal(list.tools.length,20)
+  const list=await mcp('tools/list',{});assert.equal(list.tools.length,20);assert.equal(list.tools.some(t=>t.name==='log_workout'),false)
   assert.equal(list.tools.find(t=>t.name==='get_training_context').annotations.readOnlyHint,true)
   assert.equal(list.tools.find(t=>t.name==='create_session_prescription').annotations.readOnlyHint,false)
   assert.equal((await call('get_profile')).name,'Synthetic Integration')
-  const context=await call('get_training_context',{exercise_ids:['0289']})
-  assert.equal(context.exercises[0].load_convention,'per_dumbbell');checks.push('20 annotated tools and unified dumbbell context')
+  const context=await call('get_training_context',{exercise_ids:['0289','0743']})
+  assert.equal(context.exercises[0].load_convention,'per_dumbbell');assert.ok(context.exercises[0].aliases.includes('Synthetic chest press'));assert.deepEqual(context.exercises[1].weight_stack,[5,11.3,18.1]);checks.push('20 annotated tools; history writes deferred; unified aliases, dumbbells and machine stack context')
   const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
   const p=await call('create_session_prescription',{session_id:'isolated-strength',title:'Synthetic strength',date,unit:'kg',exercises:[{position:1,exercise_id:'0289',mode:'reps',sets:[{load:12,reps:8,rir:2},{load:12,reps:8,rir:2}]}]})
   await json('/api/session-prescriptions/start',{session_id:p.id,revision:p.revision},cookie)
@@ -97,6 +100,11 @@ async function smoke(){
   assert.deepEqual(final.state.routines,original.routines)
   assert.equal(final.state.workouts[0].entries[0].target.dbLoad,'each')
   checks.push('prescribe → start → changed/partially skipped completion → sync → MCP review; master routine unchanged')
+  const recovery=await askAdminSocket({cmd:'recover',id:uid})
+  assert.ok(recovery.code)
+  assert.equal((await request('/api/data',{headers:{Cookie:cookie}})).status,401)
+  assert.equal((await request('/mcp',{method:'POST',headers:{Authorization:'Bearer '+tokens.access_token}})).status,401)
+  checks.push('legacy admin becomes owner; local recovery invalidates app session and MCP grant')
   fs.writeFileSync('/tmp/integration-result.json',JSON.stringify({ok:true,checks,completed:new Date().toISOString()}))
   console.log('[integration] PASS: '+checks.join('; '))
 }

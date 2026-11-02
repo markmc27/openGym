@@ -17,7 +17,9 @@ services:
       ORIGIN: ${OPENGYM_ORIGIN:-http://localhost:8090}
       MCP_ENABLED: '1'
       MCP_ORIGIN: ${OPENGYM_MCP_ORIGIN:-${OPENGYM_ORIGIN:-http://localhost:8090}}
-      MCP_REDIRECT_URIS: ${MCP_REDIRECT_URIS:-https://chatgpt.com/connector_platform_oauth_redirect}
+      # Exact callbacks only: existing ChatGPT connector and local n8n OAuth.
+      # Approved and applied 2026-11-02 via opengym-n8n-oauth.yml.
+      MCP_REDIRECT_URIS: "https://chatgpt.com/connector_platform_oauth_redirect,http://localhost:5678/rest/oauth2-credential/callback"
       TZ: Europe/London
       ALLOW_GUEST: '0'
       FIRST_USER_ADMIN: '1'

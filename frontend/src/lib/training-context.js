@@ -1,6 +1,15 @@
 import { exAvailable, profileEquipment } from './equipment.js'
 import { weightIncrement } from './progression.js'
-import { isBellEx, dbLoadFor, dbLoadOf, withDbLoad, ownedWeightsFor } from './dumbbells.js'
+import { isBellEx, dbLoadFor, dbLoadOf, withDbLoad, ownedWeightsFor, stackOf } from './dumbbells.js'
+import { exerciseAliases, normalizeAliases } from './exercise-aliases.js'
+export function coachingAliases(S,ex) {
+  return Object.hasOwn(S.exAliases || {},ex.id) ? exerciseAliases(ex,S.exAliases) : normalizeAliases([...(S.exerciseContexts?.[ex.id]?.aliases || []),...exerciseAliases(ex,{})])
+}
+export function saveCoachingAliases(S,ex,aliases) {
+  const values=normalizeAliases(aliases)
+  S.exAliases={...(S.exAliases || {}),[ex.id]:values}
+  return values
+}
 export const LOAD_CONVENTIONS = {
   unspecified:'Not specified',per_dumbbell:'Per dumbbell',total:'Total load',
   added_load:'Added load only',assistance:'Assistance (less means harder)',bodyweight:'Bodyweight',
@@ -29,7 +38,7 @@ export function exerciseContext(S,ex,cfg={}) {
   return {unit:S.unit || 'kg',exercise_id:ex.id,name:ex.n,equipment:ex.eq || null,available:exerciseAvailable(S,ex),
     load_convention:convention,load_convention_label:LOAD_CONVENTIONS[convention],
     ...(isBellEx(ex) ? {app_load_meaning:dbLoadFor(S,{...cfg,id:ex.id}),owned_weights:ownedWeightsFor(S,{...cfg,id:ex.id}) || null} : {}),machine:own.machine || null,
-    aliases:Array.isArray(own.aliases)?own.aliases.slice(0,5):[],setup_notes:S.exNotes?.[ex.id] || null,
+    aliases:coachingAliases(S,ex),weight_stack:stackOf(S,ex.id),setup_notes:S.exNotes?.[ex.id] || null,
     increment:cfg.inc>0 ? cfg.inc : weightIncrement({id:ex.id},S.unit || 'kg'),increment_source:cfg.inc>0?'routine':'app_default',
     bar_weight:S.barWeights?.[ex.id] ?? null,plate_loading:S.loadKind?.[ex.id]?.kind ?? null,
     favourite:(S.favEx || []).includes(ex.id),last_used:(S.workouts || []).filter(w=>w.entries?.some(e=>e.id===ex.id)).map(w=>w.d).sort().at(-1) || null}

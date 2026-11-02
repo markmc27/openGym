@@ -81,6 +81,7 @@ describe('remote MCP authorization',()=>{
     const init=await mcp(tokens.access_token,'initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}})
     expect(init.result.serverInfo.name).toBe('opengym')
     const list=await mcp(tokens.access_token,'tools/list',{})
+    expect(list.result.tools.some(t=>t.name==='log_workout')).toBe(false)
     expect(list.result.tools.find(t=>t.name==='get_workout').annotations.readOnlyHint).toBe(true)
     expect(list.result.tools.find(t=>t.name==='set_next_session').annotations.readOnlyHint).toBe(false)
     const original=JSON.stringify(S)

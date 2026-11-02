@@ -1,8 +1,8 @@
 # Isolated upstream-merge test stack. Never uses the production project's images or data.
-name: opengym-upstream-test
+name: opengym-upstream-test-143
 services:
   api:
-    image: opengym-api:upstream-test-20261018
+    image: opengym-api:upstream-test-20261102
     build:
       context: .
       dockerfile: api/Dockerfile.mcp
@@ -13,10 +13,10 @@ services:
       DATA_DIR: /test-data
       PORT: 3000
       RP_ID: localhost
-      ORIGIN: http://localhost:8091
+      ORIGIN: http://localhost:8092
       MCP_ENABLED: '1'
-      MCP_ORIGIN: http://localhost:8091
-      MCP_REDIRECT_URIS: http://localhost:8091/test-callback
+      MCP_ORIGIN: http://localhost:8092
+      MCP_REDIRECT_URIS: http://localhost:8092/test-callback
       PASSWORD_LOGIN: '1'
       INVITE_ONLY: '1'
       ALLOW_GUEST: '0'
@@ -32,12 +32,12 @@ services:
     cpus: 0.5
     restart: 'no'
   web:
-    image: opengym-web:upstream-test-20261018
+    image: opengym-web:upstream-test-20261102
     build:
       context: .
       dockerfile: web/Dockerfile
       args:
-        APP_BUILD: upstream-test-20261018
+        APP_BUILD: upstream-test-20261102
     environment:
       NGINX_PORT: 8080
       BACKEND: api
@@ -47,7 +47,7 @@ services:
       CF_CONNECTING_IP: ''
       MEDIA_UPLOAD_MAX: 48m
     ports:
-      - '127.0.0.1:8091:8080'
+      - '127.0.0.1:8092:8080'
     depends_on:
       api:
         condition: service_healthy

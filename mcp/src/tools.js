@@ -1,4 +1,4 @@
-import { equipmentContext, exerciseContext, exerciseAvailable } from '../../frontend/src/lib/training-context.js'
+import { equipmentContext, exerciseContext, exerciseAvailable, coachingAliases } from '../../frontend/src/lib/training-context.js'
 import { compactSession, completedWorkSets, effortCounts } from '../../frontend/src/lib/session-review.js'
 /* The eight read-only tools. Each handler returns JSON; labels.js pre-substitutes any
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
@@ -13,7 +13,7 @@ import {
   fmt, setLabel, exLine, muscleName, policyName, friendlyDuration, ratio, muscleOrder
 } from './labels.js'
 import {
-  modeOf, workoutVolume, setsDone, effectiveRoutine, effectiveRoutineIds, lastEntryFor, workoutAt
+  modeOf, workoutVolume, setsDone, setUnitsTotal, effectiveRoutine, effectiveRoutineIds, lastEntryFor, workoutAt
 } from '../../frontend/src/lib/history.js'
 import { queueView, queueNext, pinState } from '../../frontend/src/lib/queue.js'
 import { exOr, registerCustom, CATALOGUE, searchScore } from '../../frontend/src/lib/exercises.js'
@@ -34,7 +34,7 @@ import { buildSessionEntries, startsFromLast } from '../../frontend/src/lib/sess
 // as a zod refine that is a -32602 at the SDK boundary instead of a confident wrong answer.
 const localIso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 const todayIso = () => localIso(new Date())
-const isoDate = () => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD').refine(
+export const isoDate = () => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD').refine(
   v => { const d = new Date(v + 'T12:00:00'); return !Number.isNaN(d.getTime()) && localIso(d) === v },
   { message: 'not a date the calendar has (YYYY-MM-DD)' }
 )
@@ -52,12 +52,12 @@ const exerciseOf = (id, S) => customOf(id, S) || exOr(id)
 // registers its customs) takes the larger one. It registers the profile's customs for the length
 // of one synchronous build and takes them back out in the same call: nothing else, and no other
 // profile's read, can run in between.
-function withCustomsIndexed(S, build) {
+export function withCustomsIndexed(S, build) {
   registerCustom(Array.isArray(S.customEx) ? S.customEx : [])
   try { return build() } finally { registerCustom([]) }
 }
 
-function entryView(e, S) {
+export function entryView(e, S) {
   const ex = exerciseOf(e.id, S)
   // Spread id into the cfg the way every call site in the app does (Workout.jsx, Stats.jsx,
   // progression.js) — the sheet saves a cardio target as {sets, min, speed} with no id and no
@@ -308,8 +308,8 @@ export const listWorkouts = {
         routine_name: w.name || null,
         exercise_count: (w.entries || []).length,
         sets_done: setsDone(w),
-        sets_planned: plannedSets(w),
-        sets_ratio: ratio(setsDone(w), plannedSets(w)),
+        sets_planned: setUnitsTotal(w.entries),
+        sets_ratio: ratio(setsDone(w), setUnitsTotal(w.entries)),
         volume: workoutVolume(w),
         duration_ms: w.end && w.start ? (w.end - w.start) : null,
         duration: w.end && w.start ? friendlyDuration(w.end - w.start) : null,
@@ -318,12 +318,6 @@ export const listWorkouts = {
       }))
     }
   }
-}
-
-function plannedSets(w) {
-  let n = 0
-  ;(w.entries || []).forEach(e => { n += (e.sets || []).length })
-  return n
 }
 
 /** get_workout — full entry/set breakdown for one date. */
@@ -375,7 +369,7 @@ export const getWorkout = {
       session_id: w.session_id || null, note: w.note || null, prescription: w.prescription || null,
       volume: workoutVolume(w),
       sets_done: setsDone(w),
-      sets_planned: plannedSets(w),
+      sets_planned: setUnitsTotal(w.entries),
       duration: w.end && w.start ? friendlyDuration(w.end - w.start) : null,
       prs: (w.prs || []).map(id => {
         const ex = exerciseOf(id, S)
@@ -532,7 +526,13 @@ export const muscleBalance = {
 function sourceOf(S, cfg, plan, field, routine) {
   // Progression off (or a deload routine): the session is built from the routine's own target,
   // exactly as session-start.js does with useTarget — history and the confirmed weight are ignored.
-  if (!plan || plan.kind === 'off') return 'routine_plan'
+  // Except progression off under "start from your last session" (#217): there both the weight and
+  // the reps are last time's, when there is a last time. A deload routine keeps its own numbers.
+  if (!plan) return 'routine_plan'
+  if (plan.kind === 'off') {
+    const fromLast = startsFromLast(S) && routine?.excludeFromProgression !== true
+    return fromLast && lastEntryFor(S, cfg.id, routine && routine.id) ? 'last_session' : 'routine_plan'
+  }
   const decided = plan.kind !== 'first' && plan[field] != null
   // A policy that settles on the routine's own reps or hold — a restart after the plan was
   // edited, a bodyweight hold at the plan's count — is the plan speaking, not an override.
@@ -709,7 +709,7 @@ export const SESSION_TOOLS = [
       const S=getState() || {}, seen=new Set()
       const matches=[...(S.customEx || []),...CATALOGUE].filter(ex => !seen.has(ex.id) && seen.add(ex.id))
         .filter(ex => (!available_only || exerciseAvailable(S,ex)) && (!equipment || (ex.eq || '').toLowerCase()===equipment.toLowerCase()) && (!body_part || (ex.bp || '').toLowerCase()===body_part.toLowerCase()))
-        .map(ex => ({ex,score:Math.max(searchScore(ex,query),(S.exerciseContexts?.[ex.id]?.aliases || []).some(a=>a.toLowerCase().includes(query.toLowerCase()))?100000:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.ex.id.localeCompare(b.ex.id))
+        .map(ex => ({ex,score:Math.max(searchScore(ex,query),coachingAliases(S,ex).some(a=>a.toLowerCase().includes(query.toLowerCase()))?100000:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.ex.id.localeCompare(b.ex.id))
       return {unit:S.unit || 'kg',total:matches.length,exercises:matches.slice(0,limit).map(({ex})=>({...exerciseContext(S,ex),id:ex.id,name:ex.n,equipment:ex.eq || null,body_part:ex.bp || null,target:ex.tg || null,secondary_muscles:ex.sm || [],custom:(S.customEx || []).some(c=>c.id===ex.id),supported_modes:ex.bp==='cardio' ? [] : ['reps','time']}))}
     } },
   { name:'create_session_prescription', description:'Create one dated standalone workout without creating or changing a master routine. Use search_exercises for IDs. Provide every exercise and set explicitly: reps or timed seconds, load in profile units, optional warm-up phase, per-side rep sets, adjacent superset groups, rest and coaching notes. An optional base_routine_id records provenance only. Stable IDs make identical retries safe; never substitute a smaller test workout for the requested session.',
@@ -724,7 +724,7 @@ export const SESSION_TOOLS = [
     schema:{exercise_ids:z.array(z.string().min(1).max(128)).max(100).optional()},
     handler:({exercise_ids})=>{
       const S=getState() || {},configs=(S.routines || []).flatMap(r=>r.ex || [])
-      const allIds=[...new Set(exercise_ids || [...(S.favEx || []),...Object.keys(S.exNotes || {}),...Object.keys(S.exerciseContexts || {}),...Object.keys(S.dbLoad || {}),...configs.map(c=>c.id)])],ids=allIds.slice(0,100)
+      const allIds=[...new Set(exercise_ids || [...(S.favEx || []),...Object.keys(S.exNotes || {}),...Object.keys(S.exerciseContexts || {}),...Object.keys(S.dbLoad || {}),...Object.keys(S.stackWeights || {}),...Object.keys(S.exAliases || {}),...configs.map(c=>c.id)])],ids=allIds.slice(0,100)
       return {unit:S.unit || 'kg',context_count:allIds.length,truncated:allIds.length>ids.length,...equipmentContext(S),exercises:ids.map(id=>{
         const ex=customOf(id,S) || CATALOGUE.find(e=>e.id===id)
         if (!ex) return {exercise_id:id,missing:true}

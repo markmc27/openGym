@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest'
 import {EXIDX} from './exercises.js'
-import {exerciseContext,loadConventionFor,saveLoadConvention} from './training-context.js'
+import {exerciseContext,loadConventionFor,saveLoadConvention,coachingAliases,saveCoachingAliases} from './training-context.js'
 import {applyPrescription} from './session-prescription.js'
 import {mergeStates,stampChange,STAMPED_MAPS} from './sync-merge.js'
 import {effortCounts} from './session-review.js'
@@ -41,4 +41,24 @@ describe('upstream 1.4 plus remote coaching',()=>{
   it('counts an explicitly failed set as known effort while unmarked rows stay unknown',()=>{
     expect(effortCounts([{entries:[{sets:[{done:true,failure:true},{done:true}]}]}])).toEqual({rated_work_sets:1,unrated_work_sets:1})
   })
+})
+
+
+it('unifies native and coaching aliases without leaking names between profiles',()=>{
+  const a={exerciseContexts:{[ex.id]:{aliases:['Home press']}}}, b={}
+  expect(coachingAliases(a,ex)).toContain('Home press')
+  saveCoachingAliases(a,ex,['New gym press','New gym press'])
+  expect(coachingAliases(a,ex)).toEqual(['New gym press'])
+  expect(coachingAliases(b,ex)).not.toContain('New gym press')
+  a.exAliases[ex.id]=[]
+  expect(coachingAliases(a,ex)).toEqual([])
+})
+it('exposes irregular machine stack weights in profile units and preserves them through sync',()=>{
+  const S={unit:'kg',stackWeights:{'0743':{unit:'kg',weights:[5,11.3,18.1],_ts:10}}}
+  const machine={id:'0743',n:'Machine',eq:'sled machine'}
+  expect(exerciseContext(S,machine).weight_stack).toEqual([5,11.3,18.1])
+  expect(exerciseContext({...S,unit:'lb'},machine).weight_stack).toEqual([11,24.9,39.9])
+  const merged=mergeStates({...S,_ts:10},{exerciseContexts:{'0743':{machine:'Gym A',_ts:11}},_ts:11})
+  expect(merged.stackWeights['0743'].weights).toEqual([5,11.3,18.1])
+  expect(merged.exerciseContexts['0743'].machine).toBe('Gym A')
 })
